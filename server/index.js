@@ -16,9 +16,10 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
-const API_KEY = process.env.API_KEY || "";
-const BASE_URL = process.env.BASE_URL || "http://localhost:11434";
-const MODEL = process.env.MODEL || "qwen2.5:7b";
+const DEFAULT_API_KEY = process.env.API_KEY || "";
+const DEFAULT_BASE_URL = process.env.BASE_URL || "http://localhost:11434";
+const DEFAULT_MODEL = process.env.MODEL || "qwen2.5:7b";
+const DEFAULT_PROVIDER = process.env.PROVIDER || "ollama";
 
 const SYSTEM_PROMPT = `
 你是一个前端页面生成器。根据用户需求生成页面JSON。
@@ -39,6 +40,17 @@ const SYSTEM_PROMPT_ITERATE = `
 2. 只修改用户要求的部分
 3. 返回完整的JSON，不要省略任何字段
 4. 必须保持JSON结构合法
+`;
+
+const SYSTEM_PROMPT_PROJECT = `
+你是一个前端项目生成器。根据用户需求生成包含多个页面的项目JSON。
+
+支持三种页面类型：
+1. list - 列表页（搜索表单 + 数据表格 + 分页）
+2. form - 表单页（表单字段 + 提交按钮）
+3. dashboard - 仪表盘页（统计卡片 + 搜索表单 + 数据表格 + 分页）
+
+根据用户描述生成2-5个相关页面，组成一个完整的管理系统项目。
 `;
 
 const SearchFormFieldSchema = z.object({
@@ -206,6 +218,24 @@ const structuredPageSchema = {
   required: ["pageName"]
 };
 
+const projectSchema = {
+  type: "object",
+  properties: {
+    projectName: {
+      type: "string",
+      description: "项目名称，如电商管理系统"
+    },
+    pages: {
+      type: "array",
+      minItems: 2,
+      maxItems: 5,
+      description: "页面列表",
+      items: structuredPageSchema
+    }
+  },
+  required: ["projectName", "pages"]
+};
+
 function buildComponents(parsed) {
   const components = [];
   const pageType = parsed.pageType || "list";
@@ -229,48 +259,130 @@ function buildComponents(parsed) {
   return { pageName: parsed.pageName, pageType, components };
 }
 
+function getProviderConfig(reqBody) {
+  const provider = reqBody.provider || DEFAULT_PROVIDER;
+  const baseUrl = reqBody.baseUrl || DEFAULT_BASE_URL;
+  const apiKey = reqBody.apiKey || DEFAULT_API_KEY;
+  const model = reqBody.model || DEFAULT_MODEL;
+
+  return { provider, baseUrl, apiKey, model };
+}
+
+async function callAI({ provider, baseUrl, apiKey, model, messages, format, stream }) {
+  if (provider === "openai") {
+    const headers = {
+      "Content-Type": "application/json",
+      ...(apiKey ? { Authorization: `Bearer ${apiKey}` } : {})
+    };
+
+    const body = {
+      model,
+      messages,
+      stream,
+      ...(format ? { response_format: { type: "json_object" } } : {})
+    };
+
+    const url = `${baseUrl}/chat/completions`;
+    return { url, headers, body, provider };
+  }
+
+  const headers = {
+    "Content-Type": "application/json",
+    ...(apiKey ? { Authorization: `Bearer ${apiKey}` } : {})
+  };
+
+  const body = {
+    model,
+    messages,
+    stream,
+    ...(format ? { format } : {})
+  };
+
+  const url = `${baseUrl}/api/chat`;
+  return { url, headers, body, provider };
+}
+
+function parseAIResponse(parsed, provider) {
+  if (provider === "openai") {
+    return parsed.choices?.[0]?.delta?.content || parsed.choices?.[0]?.message?.content || "";
+  }
+  return parsed.message?.content || "";
+}
+
+function isDone(parsed, provider) {
+  if (provider === "openai") {
+    return parsed.choices?.[0]?.finish_reason === "stop";
+  }
+  return parsed.done === true;
+}
+
+app.get("/models", async (req, res) => {
+  try {
+    const provider = req.query.provider || DEFAULT_PROVIDER;
+    const baseUrl = req.query.baseUrl || DEFAULT_BASE_URL;
+    const apiKey = req.query.apiKey || DEFAULT_API_KEY;
+
+    if (provider === "ollama") {
+      const headers = {
+        "Content-Type": "application/json",
+        ...(apiKey ? { Authorization: `Bearer ${apiKey}` } : {})
+      };
+
+      const response = await fetch(`${baseUrl}/api/tags`, { headers });
+
+      if (!response.ok) {
+        return res.json({ success: true, models: [{ id: DEFAULT_MODEL, name: DEFAULT_MODEL }] });
+      }
+
+      const data = await response.json();
+      const models = (data.models || []).map(m => ({
+        id: m.name,
+        name: m.name,
+        size: m.size ? `${(m.size / 1024 / 1024 / 1024).toFixed(1)}GB` : undefined
+      }));
+
+      res.json({ success: true, models });
+    } else {
+      res.json({
+        success: true,
+        models: [
+          { id: "gpt-4o-mini", name: "GPT-4o Mini" },
+          { id: "gpt-4o", name: "GPT-4o" },
+          { id: "gpt-3.5-turbo", name: "GPT-3.5 Turbo" }
+        ]
+      });
+    }
+  } catch {
+    res.json({ success: true, models: [{ id: DEFAULT_MODEL, name: DEFAULT_MODEL }] });
+  }
+});
+
 app.post("/generate", async (req, res) => {
   try {
     const { prompt } = req.body;
+    const config = getProviderConfig(req.body);
 
-    console.log("Received prompt:", prompt);
+    console.log("Received prompt:", prompt, "Provider:", config.provider, "Model:", config.model);
 
-    const headers = {
-      "Content-Type": "application/json",
-      ...(API_KEY ? { Authorization: `Bearer ${API_KEY}` } : {})
-    };
+    const { url, headers, body, provider } = await callAI({
+      ...config,
+      messages: [
+        { role: "system", content: SYSTEM_PROMPT },
+        { role: "user", content: prompt }
+      ],
+      format: structuredPageSchema,
+      stream: false
+    });
 
-    const response = await fetch(
-      `${BASE_URL}/api/chat`,
-      {
-        method: "POST",
-        headers,
-        body: JSON.stringify({
-          model: MODEL,
-          format: structuredPageSchema,
-          stream: false,
-          messages: [
-            { role: "system", content: SYSTEM_PROMPT },
-            { role: "user", content: prompt }
-          ]
-        })
-      }
-    );
-
-    console.log("API response status:", response.status);
+    const response = await fetch(url, { method: "POST", headers, body: JSON.stringify(body) });
 
     if (!response.ok) {
       const text = await response.text();
-      console.error("API error response:", text);
-      return res.status(500).json({
-        success: false,
-        error: `API returned ${response.status}`,
-        detail: text
-      });
+      return res.status(500).json({ success: false, error: `API returned ${response.status}`, detail: text });
     }
 
     const result = await response.json();
-    const content = result.message.content;
+    const content = parseAIResponse(result, provider);
 
     let parsed;
     try {
@@ -287,45 +399,30 @@ app.post("/generate", async (req, res) => {
     res.json({ success: true, data: buildComponents(parsed) });
   } catch (error) {
     console.error("API Error:", error);
-    console.error("Error cause:", error.cause);
-
-    res.status(500).json({
-      success: false,
-      error: error.message,
-      cause: error.cause?.message || undefined
-    });
+    res.status(500).json({ success: false, error: error.message });
   }
 });
 
 app.post("/generate/stream", async (req, res) => {
   try {
     const { prompt } = req.body;
+    const config = getProviderConfig(req.body);
 
     res.setHeader("Content-Type", "text/event-stream");
     res.setHeader("Cache-Control", "no-cache");
     res.setHeader("Connection", "keep-alive");
 
-    const headers = {
-      "Content-Type": "application/json",
-      ...(API_KEY ? { Authorization: `Bearer ${API_KEY}` } : {})
-    };
+    const { url, headers, body, provider } = await callAI({
+      ...config,
+      messages: [
+        { role: "system", content: SYSTEM_PROMPT },
+        { role: "user", content: prompt }
+      ],
+      format: structuredPageSchema,
+      stream: true
+    });
 
-    const response = await fetch(
-      `${BASE_URL}/api/chat`,
-      {
-        method: "POST",
-        headers,
-        body: JSON.stringify({
-          model: MODEL,
-          format: structuredPageSchema,
-          stream: true,
-          messages: [
-            { role: "system", content: SYSTEM_PROMPT },
-            { role: "user", content: prompt }
-          ]
-        })
-      }
-    );
+    const response = await fetch(url, { method: "POST", headers, body: JSON.stringify(body) });
 
     if (!response.ok) {
       const text = await response.text();
@@ -345,37 +442,43 @@ app.post("/generate/stream", async (req, res) => {
 
       buffer += decoder.decode(value, { stream: true });
 
-      const lines = buffer.split("\n");
-      buffer = lines.pop() || "";
+      if (provider === "openai") {
+        const lines = buffer.split("\n");
+        buffer = lines.pop() || "";
 
-      for (const line of lines) {
-        const trimmed = line.trim();
-        if (!trimmed) continue;
+        for (const line of lines) {
+          const trimmed = line.trim();
+          if (!trimmed || trimmed === "data: [DONE]") continue;
+          if (!trimmed.startsWith("data: ")) continue;
 
-        try {
-          const parsed = JSON.parse(trimmed);
-
-          if (parsed.done === true && !parsed.message?.content) continue;
-
-          const token = parsed.message?.content || "";
-
-          if (token) {
-            fullContent += token;
-            res.write(`data: ${JSON.stringify({ token, fullContent })}\n\n`);
-          }
-        } catch {}
-      }
-    }
-
-    if (buffer.trim()) {
-      try {
-        const parsed = JSON.parse(buffer.trim());
-        const token = parsed.message?.content || "";
-        if (token) {
-          fullContent += token;
-          res.write(`data: ${JSON.stringify({ token, fullContent })}\n\n`);
+          try {
+            const parsed = JSON.parse(trimmed.slice(6));
+            const token = parseAIResponse(parsed, provider);
+            if (token) {
+              fullContent += token;
+              res.write(`data: ${JSON.stringify({ token, fullContent })}\n\n`);
+            }
+          } catch {}
         }
-      } catch {}
+      } else {
+        const lines = buffer.split("\n");
+        buffer = lines.pop() || "";
+
+        for (const line of lines) {
+          const trimmed = line.trim();
+          if (!trimmed) continue;
+
+          try {
+            const parsed = JSON.parse(trimmed);
+            if (parsed.done === true && !parsed.message?.content) continue;
+            const token = parsed.message?.content || "";
+            if (token) {
+              fullContent += token;
+              res.write(`data: ${JSON.stringify({ token, fullContent })}\n\n`);
+            }
+          } catch {}
+        }
+      }
     }
 
     let result;
@@ -398,94 +501,61 @@ app.post("/generate/stream", async (req, res) => {
 app.post("/iterate", async (req, res) => {
   try {
     const { currentSchema, instruction } = req.body;
+    const config = getProviderConfig(req.body);
 
-    const headers = {
-      "Content-Type": "application/json",
-      ...(API_KEY ? { Authorization: `Bearer ${API_KEY}` } : {})
-    };
+    const { url, headers, body, provider } = await callAI({
+      ...config,
+      messages: [
+        { role: "system", content: SYSTEM_PROMPT_ITERATE },
+        { role: "user", content: `当前页面JSON：\n${JSON.stringify(currentSchema, null, 2)}\n\n修改需求：${instruction}` }
+      ],
+      format: structuredPageSchema,
+      stream: false
+    });
 
-    const response = await fetch(
-      `${BASE_URL}/api/chat`,
-      {
-        method: "POST",
-        headers,
-        body: JSON.stringify({
-          model: MODEL,
-          format: structuredPageSchema,
-          stream: false,
-          messages: [
-            { role: "system", content: SYSTEM_PROMPT_ITERATE },
-            {
-              role: "user",
-              content: `当前页面JSON：\n${JSON.stringify(currentSchema, null, 2)}\n\n修改需求：${instruction}`
-            }
-          ]
-        })
-      }
-    );
+    const response = await fetch(url, { method: "POST", headers, body: JSON.stringify(body) });
 
     if (!response.ok) {
       const text = await response.text();
-      return res.status(500).json({
-        success: false,
-        error: `API returned ${response.status}`,
-        detail: text
-      });
+      return res.status(500).json({ success: false, error: `API returned ${response.status}`, detail: text });
     }
 
     const result = await response.json();
-    const content = result.message.content;
+    const content = parseAIResponse(result, provider);
 
     let parsed;
     try {
       parsed = StructuredPageZodSchema.parse(JSON.parse(content));
     } catch (e) {
-      console.error("Iterate Zod parse error:", e.message);
       return res.json({ success: true, data: { raw: content } });
     }
 
     res.json({ success: true, data: buildComponents(parsed) });
   } catch (error) {
-    console.error("Iterate API Error:", error);
-    res.status(500).json({
-      success: false,
-      error: error.message
-    });
+    res.status(500).json({ success: false, error: error.message });
   }
 });
 
 app.post("/iterate/stream", async (req, res) => {
   try {
     const { currentSchema, instruction } = req.body;
+    const config = getProviderConfig(req.body);
 
     res.setHeader("Content-Type", "text/event-stream");
     res.setHeader("Cache-Control", "no-cache");
     res.setHeader("Connection", "keep-alive");
 
-    const headers = {
-      "Content-Type": "application/json",
-      ...(API_KEY ? { Authorization: `Bearer ${API_KEY}` } : {})
-    };
+    const { url, headers, body, provider } = await callAI({
+      ...config,
+      messages: [
+        { role: "system", content: SYSTEM_PROMPT_ITERATE },
+        { role: "user", content: `当前页面JSON：\n${JSON.stringify(currentSchema, null, 2)}\n\n修改需求：${instruction}` }
+      ],
+      format: structuredPageSchema,
+      stream: true
+    });
 
-    const response = await fetch(
-      `${BASE_URL}/api/chat`,
-      {
-        method: "POST",
-        headers,
-        body: JSON.stringify({
-          model: MODEL,
-          format: structuredPageSchema,
-          stream: true,
-          messages: [
-            { role: "system", content: SYSTEM_PROMPT_ITERATE },
-            {
-              role: "user",
-              content: `当前页面JSON：\n${JSON.stringify(currentSchema, null, 2)}\n\n修改需求：${instruction}`
-            }
-          ]
-        })
-      }
-    );
+    const response = await fetch(url, { method: "POST", headers, body: JSON.stringify(body) });
 
     if (!response.ok) {
       const text = await response.text();
@@ -505,34 +575,38 @@ app.post("/iterate/stream", async (req, res) => {
 
       buffer += decoder.decode(value, { stream: true });
 
-      const lines = buffer.split("\n");
-      buffer = lines.pop() || "";
-
-      for (const line of lines) {
-        const trimmed = line.trim();
-        if (!trimmed) continue;
-
-        try {
-          const parsed = JSON.parse(trimmed);
-          if (parsed.done === true && !parsed.message?.content) continue;
-          const token = parsed.message?.content || "";
-          if (token) {
-            fullContent += token;
-            res.write(`data: ${JSON.stringify({ token, fullContent })}\n\n`);
-          }
-        } catch {}
-      }
-    }
-
-    if (buffer.trim()) {
-      try {
-        const parsed = JSON.parse(buffer.trim());
-        const token = parsed.message?.content || "";
-        if (token) {
-          fullContent += token;
-          res.write(`data: ${JSON.stringify({ token, fullContent })}\n\n`);
+      if (provider === "openai") {
+        const lines = buffer.split("\n");
+        buffer = lines.pop() || "";
+        for (const line of lines) {
+          const trimmed = line.trim();
+          if (!trimmed || trimmed === "data: [DONE]" || !trimmed.startsWith("data: ")) continue;
+          try {
+            const parsed = JSON.parse(trimmed.slice(6));
+            const token = parseAIResponse(parsed, provider);
+            if (token) {
+              fullContent += token;
+              res.write(`data: ${JSON.stringify({ token, fullContent })}\n\n`);
+            }
+          } catch {}
         }
-      } catch {}
+      } else {
+        const lines = buffer.split("\n");
+        buffer = lines.pop() || "";
+        for (const line of lines) {
+          const trimmed = line.trim();
+          if (!trimmed) continue;
+          try {
+            const parsed = JSON.parse(trimmed);
+            if (parsed.done === true && !parsed.message?.content) continue;
+            const token = parsed.message?.content || "";
+            if (token) {
+              fullContent += token;
+              res.write(`data: ${JSON.stringify({ token, fullContent })}\n\n`);
+            }
+          } catch {}
+        }
+      }
     }
 
     let result;
@@ -546,20 +620,64 @@ app.post("/iterate/stream", async (req, res) => {
     res.write(`data: ${JSON.stringify({ done: true, result })}\n\n`);
     res.end();
   } catch (error) {
-    console.error("Iterate Stream API Error:", error);
     res.write(`data: ${JSON.stringify({ error: error.message })}\n\n`);
     res.end();
+  }
+});
+
+app.post("/generate-project", async (req, res) => {
+  try {
+    const { prompt } = req.body;
+    const config = getProviderConfig(req.body);
+
+    const { url, headers, body, provider } = await callAI({
+      ...config,
+      messages: [
+        { role: "system", content: SYSTEM_PROMPT_PROJECT },
+        { role: "user", content: prompt }
+      ],
+      format: projectSchema,
+      stream: false
+    });
+
+    const response = await fetch(url, { method: "POST", headers, body: JSON.stringify(body) });
+
+    if (!response.ok) {
+      const text = await response.text();
+      return res.status(500).json({ success: false, error: `API returned ${response.status}`, detail: text });
+    }
+
+    const result = await response.json();
+    const content = parseAIResponse(result, provider);
+
+    let parsed;
+    try {
+      parsed = JSON.parse(content);
+    } catch {
+      return res.json({ success: true, data: { raw: content } });
+    }
+
+    if (parsed.pages && Array.isArray(parsed.pages)) {
+      const pages = parsed.pages.map(p => {
+        try {
+          return buildComponents(StructuredPageZodSchema.parse(p));
+        } catch {
+          return buildComponents(p);
+        }
+      });
+      res.json({ success: true, data: { projectName: parsed.projectName, pages } });
+    } else {
+      res.json({ success: true, data: { raw: content } });
+    }
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
   }
 });
 
 app.post("/analyze-fields", async (req, res) => {
   try {
     const { columns } = req.body;
-
-    const headers = {
-      "Content-Type": "application/json",
-      ...(API_KEY ? { Authorization: `Bearer ${API_KEY}` } : {})
-    };
+    const config = getProviderConfig(req.body);
 
     const fieldAnalysisSchema = {
       type: "object",
@@ -579,48 +697,28 @@ app.post("/analyze-fields", async (req, res) => {
       required: ["fields"]
     };
 
-    const response = await fetch(
-      `${BASE_URL}/api/chat`,
-      {
-        method: "POST",
-        headers,
-        body: JSON.stringify({
-          model: MODEL,
-          format: fieldAnalysisSchema,
-          stream: false,
-          messages: [
-            {
-              role: "system",
-              content: "你是字段分析器。分析给定字段列表，返回每个字段的语义类型。"
-            },
-            {
-              role: "user",
-              content: JSON.stringify(columns)
-            }
-          ]
-        })
-      }
-    );
+    const { url, headers, body, provider } = await callAI({
+      ...config,
+      messages: [
+        { role: "system", content: "你是字段分析器。分析给定字段列表，返回每个字段的语义类型。" },
+        { role: "user", content: JSON.stringify(columns) }
+      ],
+      format: fieldAnalysisSchema,
+      stream: false
+    });
+
+    const response = await fetch(url, { method: "POST", headers, body: JSON.stringify(body) });
 
     if (!response.ok) {
-      return res.status(500).json({
-        success: false,
-        error: `API returned ${response.status}`
-      });
+      return res.status(500).json({ success: false, error: `API returned ${response.status}` });
     }
 
     const result = await response.json();
-    const content = result.message.content;
+    const content = parseAIResponse(result, provider);
 
-    res.json({
-      success: true,
-      data: JSON.parse(content)
-    });
+    res.json({ success: true, data: JSON.parse(content) });
   } catch (error) {
-    res.status(500).json({
-      success: false,
-      error: error.message
-    });
+    res.status(500).json({ success: false, error: error.message });
   }
 });
 

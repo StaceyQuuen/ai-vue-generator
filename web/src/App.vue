@@ -1,12 +1,12 @@
 <script setup lang="ts">
-import { ref, computed } from "vue"
-import { generatePageStream, iteratePageStream } from "./api"
-import { generateVueCode } from "./generator/generateVueCode"
+import { ref, computed, onMounted, watch } from "vue"
+import { generatePageStream, iteratePageStream, fetchModels, generateProject } from "./api"
+import { generateVueCode, generateProjectCode } from "./generator/generateVueCode"
 import { generateMockData } from "./mock/generateMockData"
 import { promptTemplates } from "./config/promptTemplates"
 import { getHistory, addHistory, deleteHistory, clearHistory } from "./store/history"
 import { downloadFile } from "./utils/download"
-import type { PageSchema, TableComponent, HistoryItem, ChatMessage } from "./types/schema"
+import type { PageSchema, TableComponent, HistoryItem, ChatMessage, ProviderConfig, ModelOption, ProjectSchema } from "./types/schema"
 import SearchForm from "./renderer/SearchForm.vue"
 import DataTable from "./renderer/DataTable.vue"
 import PagePagination from "./renderer/PagePagination.vue"
@@ -27,6 +27,21 @@ const showHistory = ref(false)
 const iterateInstruction = ref("")
 const iterating = ref(false)
 const chatMessages = ref<ChatMessage[]>([])
+
+const showModelConfig = ref(false)
+const providerConfig = ref<ProviderConfig>({
+  provider: "ollama",
+  baseUrl: "http://localhost:11434",
+  apiKey: "",
+  model: "qwen2.5:7b"
+})
+const modelList = ref<ModelOption[]>([])
+const loadingModels = ref(false)
+
+const showProjectMode = ref(false)
+const projectResult = ref<ProjectSchema | null>(null)
+const projectLoading = ref(false)
+const projectPrompt = ref("")
 
 const generatedCode = computed(() =>
   pageSchema.value
@@ -91,6 +106,30 @@ function handleCopyCode() {
   })
 }
 
+async function handleLoadModels() {
+  loadingModels.value = true
+  try {
+    const res = await fetchModels(providerConfig.value)
+    if (res.success) {
+      modelList.value = res.models
+    }
+  } catch {
+    modelList.value = [{ id: providerConfig.value.model, name: providerConfig.value.model }]
+  } finally {
+    loadingModels.value = false
+  }
+}
+
+function handleProviderChange() {
+  if (providerConfig.value.provider === "openai") {
+    providerConfig.value.baseUrl = "https://api.openai.com/v1"
+  } else {
+    providerConfig.value.baseUrl = "http://localhost:11434"
+  }
+  modelList.value = []
+  handleLoadModels()
+}
+
 async function handleGenerate() {
   if (!prompt.value.trim()) {
     ElMessage.warning("请输入页面描述")
@@ -134,7 +173,7 @@ async function handleGenerate() {
       errorMsg.value = error
       ElMessage.error(error)
     }
-  })
+  }, providerConfig.value)
 }
 
 async function handleIterate() {
@@ -178,18 +217,82 @@ async function handleIterate() {
       )
       ElMessage.error(error)
     }
-  })
+  }, providerConfig.value)
 }
+
+async function handleGenerateProject() {
+  if (!projectPrompt.value.trim()) {
+    ElMessage.warning("请输入项目描述")
+    return
+  }
+
+  projectLoading.value = true
+  projectResult.value = null
+
+  try {
+    const res = await generateProject(projectPrompt.value, providerConfig.value)
+    if (res.success && res.data?.pages) {
+      projectResult.value = res.data
+      ElMessage.success(`项目「${res.data.projectName}」生成成功！包含 ${res.data.pages.length} 个页面`)
+    } else {
+      ElMessage.error("项目生成失败，请重试")
+    }
+  } catch (err: any) {
+    ElMessage.error(err.message || "请求失败")
+  } finally {
+    projectLoading.value = false
+  }
+}
+
+function handleDownloadProject() {
+  if (!projectResult.value) return
+
+  const files = generateProjectCode(projectResult.value)
+  const fileContent = Object.entries(files)
+    .map(([path, code]) => `${"=".repeat(60)}\n📁 ${path}\n${"=".repeat(60)}\n\n${code}`)
+    .join("\n\n")
+
+  downloadFile(`${projectResult.value.projectName}-project.txt`, fileContent)
+  ElMessage.success("项目代码已下载")
+}
+
+function handleSelectProjectPage(page: PageSchema) {
+  pageSchema.value = page
+  chatMessages.value = []
+  ElMessage.success(`已加载「${page.pageName}」`)
+}
+
+onMounted(() => {
+  handleLoadModels()
+})
 </script>
 
 <template>
   <div class="app-container">
     <header class="app-header">
       <h1>🤖 AI Vue 页面生成器</h1>
-      <p>描述你想要的页面，AI 帮你生成 · 支持对话式迭代优化</p>
+      <p>描述你想要的页面，AI 帮你生成 · 支持对话式迭代优化 · 多模型适配</p>
     </header>
 
-    <div class="input-section">
+    <div class="mode-tabs">
+      <el-button
+        :type="!showProjectMode ? 'primary' : ''"
+        @click="showProjectMode = false"
+      >
+        📄 单页面生成
+      </el-button>
+      <el-button
+        :type="showProjectMode ? 'primary' : ''"
+        @click="showProjectMode = true"
+      >
+        📁 项目级生成
+      </el-button>
+      <el-button @click="showModelConfig = true" style="margin-left: auto">
+        ⚙️ 模型配置
+      </el-button>
+    </div>
+
+    <div v-if="!showProjectMode" class="input-section">
       <el-input
         v-model="prompt"
         type="textarea"
@@ -222,6 +325,53 @@ async function handleIterate() {
         <el-button @click="showHistory = true">
           📜 历史 ({{ historyList.length }})
         </el-button>
+      </div>
+    </div>
+
+    <div v-else class="input-section">
+      <el-input
+        v-model="projectPrompt"
+        type="textarea"
+        :rows="4"
+        placeholder="例如：电商后台管理系统，包含商品列表、订单管理仪表盘、新增商品表单"
+      />
+      <div class="action-bar">
+        <el-button
+          type="primary"
+          :loading="projectLoading"
+          @click="handleGenerateProject"
+          style="flex: 1"
+        >
+          {{ projectLoading ? "AI 生成中..." : "🏗️ 生成项目" }}
+        </el-button>
+      </div>
+
+      <div v-if="projectResult" class="project-result">
+        <div class="project-header">
+          <h3>📦 {{ projectResult.projectName }}</h3>
+          <el-button type="success" size="small" @click="handleDownloadProject">
+            ⬇️ 下载项目代码
+          </el-button>
+        </div>
+        <div class="project-pages">
+          <el-card
+            v-for="(page, idx) in projectResult.pages"
+            :key="idx"
+            shadow="hover"
+            class="project-page-card"
+            @click="handleSelectProjectPage(page)"
+          >
+            <div class="project-page-info">
+              <span class="project-page-name">{{ page.pageName }}</span>
+              <el-tag size="small" :type="page.pageType === 'form' ? 'success' : page.pageType === 'dashboard' ? 'warning' : 'info'">
+                {{ page.pageType === 'form' ? '表单页' : page.pageType === 'dashboard' ? '仪表盘' : '列表页' }}
+              </el-tag>
+            </div>
+            <div class="project-page-components">
+              {{ page.components.map(c => c.type === 'searchForm' ? '搜索表单' : c.type === 'table' ? '数据表格' : c.type === 'pagination' ? '分页' : c.type === 'statCards' ? '统计卡片' : '表单').join(' + ') }}
+            </div>
+          </el-card>
+        </div>
       </div>
     </div>
 
@@ -379,6 +529,77 @@ async function handleIterate() {
         </el-button>
       </div>
     </el-drawer>
+
+    <el-drawer
+      v-model="showModelConfig"
+      title="⚙️ 模型配置"
+      direction="rtl"
+      size="420px"
+    >
+      <el-form label-position="top">
+        <el-form-item label="AI 提供商">
+          <el-select
+            v-model="providerConfig.provider"
+            @change="handleProviderChange"
+            style="width: 100%"
+          >
+            <el-option label="Ollama (本地)" value="ollama" />
+            <el-option label="OpenAI (云端)" value="openai" />
+          </el-select>
+        </el-form-item>
+
+        <el-form-item label="API 地址">
+          <el-input v-model="providerConfig.baseUrl" placeholder="http://localhost:11434" />
+        </el-form-item>
+
+        <el-form-item v-if="providerConfig.provider === 'openai'" label="API Key">
+          <el-input
+            v-model="providerConfig.apiKey"
+            type="password"
+            show-password
+            placeholder="sk-..."
+          />
+        </el-form-item>
+
+        <el-form-item label="模型">
+          <div style="display: flex; gap: 8px; width: 100%">
+            <el-select
+              v-model="providerConfig.model"
+              style="flex: 1"
+              filterable
+              allow-create
+            >
+              <el-option
+                v-for="m in modelList"
+                :key="m.id"
+                :label="`${m.name}${m.size ? ` (${m.size})` : ''}`"
+                :value="m.id"
+              />
+            </el-select>
+            <el-button @click="handleLoadModels" :loading="loadingModels">
+              刷新
+            </el-button>
+          </div>
+        </el-form-item>
+      </el-form>
+
+      <div class="model-config-hint">
+        <el-alert
+          v-if="providerConfig.provider === 'ollama'"
+          title="Ollama 模式"
+          type="info"
+          :closable="false"
+          description="使用本地 Ollama 服务，确保已启动 ollama serve 并拉取了模型。"
+        />
+        <el-alert
+          v-else
+          title="OpenAI 模式"
+          type="warning"
+          :closable="false"
+          description="使用 OpenAI 兼容 API，支持 OpenAI、DeepSeek、通义千问等。需配置正确的 API 地址和 Key。"
+        />
+      </div>
+    </el-drawer>
   </div>
 </template>
 
@@ -391,7 +612,7 @@ async function handleIterate() {
 
 .app-header {
   text-align: center;
-  margin-bottom: 32px;
+  margin-bottom: 24px;
 }
 
 .app-header h1 {
@@ -401,6 +622,13 @@ async function handleIterate() {
 
 .app-header p {
   color: #666;
+}
+
+.mode-tabs {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 20px;
+  align-items: center;
 }
 
 .input-section {
@@ -587,6 +815,57 @@ async function handleIterate() {
 .iterate-input {
   display: flex;
   gap: 8px;
+}
+
+.project-result {
+  margin-top: 20px;
+}
+
+.project-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 16px;
+}
+
+.project-header h3 {
+  margin: 0;
+}
+
+.project-pages {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: 12px;
+}
+
+.project-page-card {
+  cursor: pointer;
+  transition: transform 0.2s;
+}
+
+.project-page-card:hover {
+  transform: translateY(-2px);
+}
+
+.project-page-info {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 8px;
+}
+
+.project-page-name {
+  font-weight: 600;
+  font-size: 15px;
+}
+
+.project-page-components {
+  font-size: 12px;
+  color: #909399;
+}
+
+.model-config-hint {
+  margin-top: 16px;
 }
 
 .history-toolbar {

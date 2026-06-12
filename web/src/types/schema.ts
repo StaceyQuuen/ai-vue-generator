@@ -72,6 +72,24 @@ export interface HistoryItem {
   createdAt: number;
 }
 
+export interface ModelOption {
+  id: string;
+  name: string;
+  size?: string;
+}
+
+export interface ProviderConfig {
+  provider: "ollama" | "openai";
+  baseUrl: string;
+  apiKey: string;
+  model: string;
+}
+
+export interface ProjectSchema {
+  projectName: string;
+  pages: PageSchema[];
+}
+
 export interface ChatMessage {
   role: "user" | "assistant";
   content: string;

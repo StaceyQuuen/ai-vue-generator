@@ -1,4 +1,4 @@
-import type { PageSchema } from "@/types/schema"
+import type { PageSchema, ProviderConfig } from "@/types/schema"
 
 const API_BASE = import.meta.env.VITE_API_BASE || "http://localhost:3001"
 
@@ -31,21 +31,41 @@ function toBackendSchema(schema: PageSchema): any {
   return result
 }
 
+function getProviderBody(config?: ProviderConfig): any {
+  if (!config) return {}
+  return {
+    provider: config.provider,
+    baseUrl: config.baseUrl,
+    apiKey: config.apiKey,
+    model: config.model
+  }
+}
+
+export async function fetchModels(config: ProviderConfig) {
+  const params = new URLSearchParams({
+    provider: config.provider,
+    baseUrl: config.baseUrl,
+    ...(config.apiKey ? { apiKey: config.apiKey } : {})
+  })
+
+  const response = await fetch(`${API_BASE}/models?${params}`)
+  return response.json()
+}
+
 export async function generatePage(
-  prompt: string
+  prompt: string,
+  config?: ProviderConfig
 ) {
   const response = await fetch(
     `${API_BASE}/generate`,
     {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json"
-      },
-      body: JSON.stringify({ prompt })
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ prompt, ...getProviderBody(config) })
     }
-  );
+  )
 
-  return response.json();
+  return response.json()
 }
 
 export interface StreamCallbacks {
@@ -56,88 +76,91 @@ export interface StreamCallbacks {
 
 export async function generatePageStream(
   prompt: string,
-  callbacks: StreamCallbacks
+  callbacks: StreamCallbacks,
+  config?: ProviderConfig
 ) {
   try {
     const response = await fetch(
       `${API_BASE}/generate/stream`,
       {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json"
-        },
-        body: JSON.stringify({ prompt })
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ prompt, ...getProviderBody(config) })
       }
-    );
+    )
 
     if (!response.ok) {
-      callbacks.onError(`请求失败: ${response.status}`);
-      return;
+      callbacks.onError(`请求失败: ${response.status}`)
+      return
     }
 
-    const reader = response.body!.getReader();
-    const decoder = new TextDecoder();
+    const reader = response.body!.getReader()
+    const decoder = new TextDecoder()
 
     while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
+      const { done, value } = await reader.read()
+      if (done) break
 
-      const chunk = decoder.decode(value, { stream: true });
-      const lines = chunk.split("\n");
+      const chunk = decoder.decode(value, { stream: true })
+      const lines = chunk.split("\n")
 
       for (const line of lines) {
-        if (!line.startsWith("data: ")) continue;
+        if (!line.startsWith("data: ")) continue
 
-        const jsonStr = line.slice(6);
-        if (!jsonStr.trim()) continue;
+        const jsonStr = line.slice(6)
+        if (!jsonStr.trim()) continue
 
         try {
-          const data = JSON.parse(jsonStr);
+          const data = JSON.parse(jsonStr)
 
           if (data.error) {
-            callbacks.onError(data.error);
-            return;
+            callbacks.onError(data.error)
+            return
           }
 
           if (data.done) {
-            callbacks.onDone(data.result);
-            return;
+            callbacks.onDone(data.result)
+            return
           }
 
           if (data.token) {
-            callbacks.onToken(data.token, data.fullContent);
+            callbacks.onToken(data.token, data.fullContent)
           }
         } catch {}
       }
     }
   } catch (err: any) {
-    callbacks.onError(err.message || "网络错误");
+    callbacks.onError(err.message || "网络错误")
   }
 }
 
 export async function iteratePage(
   currentSchema: PageSchema,
-  instruction: string
+  instruction: string,
+  config?: ProviderConfig
 ) {
   const backendSchema = toBackendSchema(currentSchema)
   const response = await fetch(
     `${API_BASE}/iterate`,
     {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json"
-      },
-      body: JSON.stringify({ currentSchema: backendSchema, instruction })
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        currentSchema: backendSchema,
+        instruction,
+        ...getProviderBody(config)
+      })
     }
-  );
+  )
 
-  return response.json();
+  return response.json()
 }
 
 export async function iteratePageStream(
   currentSchema: PageSchema,
   instruction: string,
-  callbacks: StreamCallbacks
+  callbacks: StreamCallbacks,
+  config?: ProviderConfig
 ) {
   try {
     const backendSchema = toBackendSchema(currentSchema)
@@ -145,54 +168,72 @@ export async function iteratePageStream(
       `${API_BASE}/iterate/stream`,
       {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json"
-        },
-        body: JSON.stringify({ currentSchema: backendSchema, instruction })
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          currentSchema: backendSchema,
+          instruction,
+          ...getProviderBody(config)
+        })
       }
-    );
+    )
 
     if (!response.ok) {
-      callbacks.onError(`请求失败: ${response.status}`);
-      return;
+      callbacks.onError(`请求失败: ${response.status}`)
+      return
     }
 
-    const reader = response.body!.getReader();
-    const decoder = new TextDecoder();
+    const reader = response.body!.getReader()
+    const decoder = new TextDecoder()
 
     while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
+      const { done, value } = await reader.read()
+      if (done) break
 
-      const chunk = decoder.decode(value, { stream: true });
-      const lines = chunk.split("\n");
+      const chunk = decoder.decode(value, { stream: true })
+      const lines = chunk.split("\n")
 
       for (const line of lines) {
-        if (!line.startsWith("data: ")) continue;
+        if (!line.startsWith("data: ")) continue
 
-        const jsonStr = line.slice(6);
-        if (!jsonStr.trim()) continue;
+        const jsonStr = line.slice(6)
+        if (!jsonStr.trim()) continue
 
         try {
-          const data = JSON.parse(jsonStr);
+          const data = JSON.parse(jsonStr)
 
           if (data.error) {
-            callbacks.onError(data.error);
-            return;
+            callbacks.onError(data.error)
+            return
           }
 
           if (data.done) {
-            callbacks.onDone(data.result);
-            return;
+            callbacks.onDone(data.result)
+            return
           }
 
           if (data.token) {
-            callbacks.onToken(data.token, data.fullContent);
+            callbacks.onToken(data.token, data.fullContent)
           }
         } catch {}
       }
     }
   } catch (err: any) {
-    callbacks.onError(err.message || "网络错误");
+    callbacks.onError(err.message || "网络错误")
   }
+}
+
+export async function generateProject(
+  prompt: string,
+  config?: ProviderConfig
+) {
+  const response = await fetch(
+    `${API_BASE}/generate-project`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ prompt, ...getProviderBody(config) })
+    }
+  )
+
+  return response.json()
 }

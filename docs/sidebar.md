@@ -36,3 +36,10 @@
   - [前后端格式转换](phase5-iterate-multi-type.md#3-前后端格式转换--踩坑与修复)
   - [Mock 数据语义推断优化](phase5-iterate-multi-type.md#4-mock-数据语义推断优化)
   - [新增渲染器](phase5-iterate-multi-type.md#5-新增渲染器)
+
+- 阶段6：多模型适配 + 项目级生成
+  - [多模型适配](phase6-multi-model-project.md#1-为什么需要多模型适配)
+  - [适配器模式实现](phase6-multi-model-project.md#2-适配器模式实现)
+  - [模型配置 UI](phase6-multi-model-project.md#3-模型配置-ui)
+  - [项目级生成](phase6-multi-model-project.md#4-项目级生成)
+  - [OpenAI 兼容 API](phase6-multi-model-project.md#6-openai-兼容-api-支持)

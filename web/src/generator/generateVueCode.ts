@@ -1,4 +1,4 @@
-import type { PageSchema, SearchFormField, TableColumn, StatCard, FormField } from "../types/schema"
+import type { PageSchema, ProjectSchema, SearchFormField, TableColumn, StatCard, FormField } from "../types/schema"
 
 export function generateVueCode(schema: PageSchema): string {
   const pageType = schema.pageType || "list"
@@ -251,4 +251,105 @@ ${formItems}
       </el-form-item>
     </el-form>
 `
+}
+
+function toPascalCase(str: string): string {
+  return str
+    .replace(/[\u4e00-\u9fa5]/g, "")
+    .replace(/[^a-zA-Z0-9]/g, " ")
+    .split(" ")
+    .filter(Boolean)
+    .map(w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase())
+    .join("") || "Page"
+}
+
+function toKebabCase(str: string): string {
+  return str
+    .replace(/[\u4e00-\u9fa5]/g, "")
+    .replace(/([A-Z])/g, "-$1")
+    .replace(/[^a-zA-Z0-9]/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-|-$/g, "")
+    .toLowerCase() || "page"
+}
+
+export function generateProjectCode(project: ProjectSchema): Record<string, string> {
+  const files: Record<string, string> = {}
+
+  for (const page of project.pages) {
+    const componentName = toPascalCase(page.pageName)
+    const fileName = toKebabCase(page.pageName)
+    files[`src/views/${fileName}/index.vue`] = generateVueCode(page)
+  }
+
+  const imports = project.pages.map(page => {
+    const componentName = toPascalCase(page.pageName)
+    const fileName = toKebabCase(page.pageName)
+    return `import ${componentName} from "@/views/${fileName}/index.vue"`
+  }).join("\n")
+
+  const routes = project.pages.map((page, index) => {
+    const componentName = toPascalCase(page.pageName)
+    const fileName = toKebabCase(page.pageName)
+    const path = index === 0 ? "/" : `/${fileName}`
+    return `  { path: "${path}", name: "${componentName}", component: ${componentName}, meta: { title: "${page.pageName}" } }`
+  }).join(",\n")
+
+  const menuItems = project.pages.map(page => {
+    const fileName = toKebabCase(page.pageName)
+    const path = project.pages.indexOf(page) === 0 ? "/" : `/${fileName}`
+    return `      <el-menu-item index="${path}">${page.pageName}</el-menu-item>`
+  }).join("\n")
+
+  files["src/router.ts"] = `import { createRouter, createWebHistory } from "vue-router"
+${imports}
+
+const routes = [
+${routes}
+]
+
+const router = createRouter({
+  history: createWebHistory(),
+  routes
+})
+
+export default router
+`
+
+  files["src/App.vue"] = `<template>
+  <el-container style="height: 100vh">
+    <el-aside width="200px" style="background: #304156">
+      <div style="padding: 20px; color: #fff; font-size: 16px; font-weight: bold; text-align: center">
+        ${project.projectName}
+      </div>
+      <el-menu
+        :default-active="$route.path"
+        router
+        background-color="#304156"
+        text-color="#bfcbd9"
+        active-text-color="#409eff"
+      >
+${menuItems}
+      </el-menu>
+    </el-aside>
+    <el-main>
+      <router-view />
+    </el-main>
+  </el-container>
+</template>
+`
+
+  files["src/main.ts"] = `import { createApp } from "vue"
+import ElementPlus from "element-plus"
+import "element-plus/dist/index.css"
+import App from "./App.vue"
+import router from "./router"
+
+const app = createApp(App)
+app.use(ElementPlus)
+app.use(router)
+app.mount("#app")
+`
+
+  return files
 }
