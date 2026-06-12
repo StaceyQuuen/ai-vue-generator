@@ -22,3 +22,10 @@
   - [Mock 数据自动生成](phase3-streaming-mock-proxy.md#2-mock-数据自动生成)
   - [后端 AI 代理](phase3-streaming-mock-proxy.md#3-后端-ai-代理)
   - [完整架构图](phase3-streaming-mock-proxy.md#4-完整架构图)
+
+- 阶段4：产品化升级
+  - [Prompt 模板系统](phase4-product-upgrade.md#1-prompt-模板系统)
+  - [历史记录持久化](phase4-product-upgrade.md#2-历史记录持久化)
+  - [代码下载功能](phase4-product-upgrade.md#3-代码下载功能)
+  - [代码生成器升级](phase4-product-upgrade.md#4-代码生成器升级)
+  - [完整产品功能清单](phase4-product-upgrade.md#5-完整产品功能清单)

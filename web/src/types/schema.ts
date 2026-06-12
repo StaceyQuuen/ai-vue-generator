@@ -35,3 +35,10 @@ export interface PageSchema {
   pageName: string;
   components: PageComponent[];
 }
+
+export interface HistoryItem {
+  id: string;
+  prompt: string;
+  schema: PageSchema;
+  createdAt: number;
+}

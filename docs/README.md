@@ -47,6 +47,7 @@
 | [阶段1](phase1-project-init.md) | 项目初始化与 AI 对接 | AI 应用架构、首次 AI 调用 |
 | [阶段2](phase2-structured-output.md) | 结构化输出与页面渲染 | JSON Schema 约束、Zod 验证、Schema 驱动渲染 |
 | [阶段3](phase3-streaming-mock-proxy.md) | 流式输出、Mock 数据与后端代理 | SSE 流式、Faker 数据、API 安全 |
+| [阶段4](phase4-product-upgrade.md) | 产品化升级 | Prompt 模板、历史记录、代码下载、完整代码生成 |
 
 ## 快速开始
 
