@@ -48,6 +48,7 @@
 | [阶段2](phase2-structured-output.md) | 结构化输出与页面渲染 | JSON Schema 约束、Zod 验证、Schema 驱动渲染 |
 | [阶段3](phase3-streaming-mock-proxy.md) | 流式输出、Mock 数据与后端代理 | SSE 流式、Faker 数据、API 安全 |
 | [阶段4](phase4-product-upgrade.md) | 产品化升级 | Prompt 模板、历史记录、代码下载、完整代码生成 |
+| [阶段5](phase5-iterate-multi-type.md) | 对话式迭代 + 多页面类型 | AI 迭代修改、多页面类型、格式转换、Mock 优化 |
 
 ## 快速开始
 

@@ -29,3 +29,10 @@
   - [代码下载功能](phase4-product-upgrade.md#3-代码下载功能)
   - [代码生成器升级](phase4-product-upgrade.md#4-代码生成器升级)
   - [完整产品功能清单](phase4-product-upgrade.md#5-完整产品功能清单)
+
+- 阶段5：对话式迭代 + 多页面类型
+  - [对话式迭代](phase5-iterate-multi-type.md#1-对话式迭代--让-ai-修改已有结果)
+  - [多页面类型](phase5-iterate-multi-type.md#2-多页面类型--从单一到多元)
+  - [前后端格式转换](phase5-iterate-multi-type.md#3-前后端格式转换--踩坑与修复)
+  - [Mock 数据语义推断优化](phase5-iterate-multi-type.md#4-mock-数据语义推断优化)
+  - [新增渲染器](phase5-iterate-multi-type.md#5-新增渲染器)
