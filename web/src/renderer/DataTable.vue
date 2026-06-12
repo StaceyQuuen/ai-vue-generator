@@ -20,7 +20,7 @@ defineProps<{
       :key="column.prop"
       :prop="column.prop"
       :label="column.label"
-      :width="column.width"
+      :width="column.width || undefined"
     />
     <el-table-column
       label="操作"

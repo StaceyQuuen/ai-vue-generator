@@ -1,4 +1,35 @@
+import type { PageSchema } from "@/types/schema"
+
 const API_BASE = import.meta.env.VITE_API_BASE || "http://localhost:3001"
+
+function toBackendSchema(schema: PageSchema): any {
+  const result: any = {
+    pageName: schema.pageName,
+    pageType: schema.pageType || "list"
+  }
+
+  for (const comp of schema.components) {
+    switch (comp.type) {
+      case "searchForm":
+        result.searchForm = { fields: comp.fields }
+        break
+      case "table":
+        result.table = { columns: comp.columns }
+        break
+      case "pagination":
+        result.pagination = { total: comp.total || 100 }
+        break
+      case "statCards":
+        result.statCards = { cards: comp.cards }
+        break
+      case "form":
+        result.form = { fields: comp.fields }
+        break
+    }
+  }
+
+  return result
+}
 
 export async function generatePage(
   prompt: string
@@ -36,6 +67,88 @@ export async function generatePageStream(
           "Content-Type": "application/json"
         },
         body: JSON.stringify({ prompt })
+      }
+    );
+
+    if (!response.ok) {
+      callbacks.onError(`请求失败: ${response.status}`);
+      return;
+    }
+
+    const reader = response.body!.getReader();
+    const decoder = new TextDecoder();
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      const chunk = decoder.decode(value, { stream: true });
+      const lines = chunk.split("\n");
+
+      for (const line of lines) {
+        if (!line.startsWith("data: ")) continue;
+
+        const jsonStr = line.slice(6);
+        if (!jsonStr.trim()) continue;
+
+        try {
+          const data = JSON.parse(jsonStr);
+
+          if (data.error) {
+            callbacks.onError(data.error);
+            return;
+          }
+
+          if (data.done) {
+            callbacks.onDone(data.result);
+            return;
+          }
+
+          if (data.token) {
+            callbacks.onToken(data.token, data.fullContent);
+          }
+        } catch {}
+      }
+    }
+  } catch (err: any) {
+    callbacks.onError(err.message || "网络错误");
+  }
+}
+
+export async function iteratePage(
+  currentSchema: PageSchema,
+  instruction: string
+) {
+  const backendSchema = toBackendSchema(currentSchema)
+  const response = await fetch(
+    `${API_BASE}/iterate`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({ currentSchema: backendSchema, instruction })
+    }
+  );
+
+  return response.json();
+}
+
+export async function iteratePageStream(
+  currentSchema: PageSchema,
+  instruction: string,
+  callbacks: StreamCallbacks
+) {
+  try {
+    const backendSchema = toBackendSchema(currentSchema)
+    const response = await fetch(
+      `${API_BASE}/iterate/stream`,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({ currentSchema: backendSchema, instruction })
       }
     );
 
