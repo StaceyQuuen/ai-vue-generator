@@ -1,13 +1,13 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, watch } from "vue"
-import { generatePageStream, iteratePageStream, fetchModels, generateProject } from "./api"
+import { generatePageStream, iteratePageStream, fetchModels, generateProject, generateWithTools, fetchTools } from "./api"
 import { generateVueCode, generateProjectCode } from "./generator/generateVueCode"
 import { generateMockData } from "./mock/generateMockData"
 import { promptTemplates } from "./config/promptTemplates"
 import { getHistory, addHistory, deleteHistory, clearHistory } from "./store/history"
 import { downloadFile } from "./utils/download"
 import { exportProjectZip, exportSinglePageZip } from "./utils/exportProject"
-import type { PageSchema, TableComponent, HistoryItem, ChatMessage, ProviderConfig, ModelOption, ProjectSchema } from "./types/schema"
+import type { PageSchema, TableComponent, HistoryItem, ChatMessage, ProviderConfig, ModelOption, ProjectSchema, ToolCallLog, ToolDefinition } from "./types/schema"
 import SearchForm from "./renderer/SearchForm.vue"
 import DataTable from "./renderer/DataTable.vue"
 import PagePagination from "./renderer/PagePagination.vue"
@@ -58,6 +58,11 @@ const themeConfig = ref<ThemeConfig>({
   layoutBg: "#f5f7fa",
   cardBg: "#ffffff"
 })
+
+const useToolMode = ref(false)
+const toolCallsLog = ref<ToolCallLog[]>([])
+const toolLoading = ref(false)
+const availableTools = ref<ToolDefinition[]>([])
 
 const generatedCode = computed(() =>
   pageSchema.value
@@ -122,6 +127,56 @@ async function handleExportZip() {
   } catch (err: any) {
     ElMessage.error("导出失败：" + err.message)
   }
+}
+
+async function handleGenerateWithTools() {
+  if (!prompt.value.trim()) {
+    ElMessage.warning("请输入页面描述")
+    return
+  }
+
+  toolLoading.value = true
+  toolCallsLog.value = []
+  loading.value = true
+  pageSchema.value = null
+  errorMsg.value = ""
+
+  try {
+    const res = await generateWithTools(prompt.value, providerConfig.value)
+    if (res.success && res.data) {
+      if (res.data.raw) {
+        errorMsg.value = "AI 返回了非结构化内容，请重试"
+      } else if (res.data.pages) {
+        projectResult.value = res.data
+        if (res.data.pages.length > 0) {
+          pageSchema.value = res.data.pages[0]
+        }
+        ElMessage.success(`工具辅助生成成功！包含 ${res.data.pages.length} 个页面`)
+      } else {
+        pageSchema.value = res.data
+        ElMessage.success("工具辅助生成成功！")
+      }
+      if (res.toolCalls) {
+        toolCallsLog.value = res.toolCalls
+      }
+    } else {
+      errorMsg.value = res.error || "生成失败"
+    }
+  } catch (err: any) {
+    errorMsg.value = err.message || "请求失败"
+  } finally {
+    toolLoading.value = false
+    loading.value = false
+  }
+}
+
+async function handleLoadTools() {
+  try {
+    const res = await fetchTools()
+    if (res.success) {
+      availableTools.value = res.tools
+    }
+  } catch {}
 }
 
 function handleCopyCode() {
@@ -299,6 +354,7 @@ function handleTemplateSelect(schema: PageSchema) {
 
 onMounted(() => {
   handleLoadModels()
+  handleLoadTools()
 })
 </script>
 
@@ -360,9 +416,48 @@ onMounted(() => {
         >
           {{ loading ? "AI 生成中..." : "🚀 生成页面" }}
         </el-button>
+        <el-button
+          type="warning"
+          :loading="toolLoading"
+          @click="handleGenerateWithTools"
+          style="flex: 1"
+        >
+          {{ toolLoading ? "工具调用中..." : "🔧 工具增强" }}
+        </el-button>
         <el-button @click="showHistory = true">
           📜 历史 ({{ historyList.length }})
         </el-button>
+      </div>
+
+      <div v-if="toolCallsLog.length > 0" class="tool-calls-section">
+        <div class="tool-calls-header">
+          <span>🔧 工具调用链路（{{ toolCallsLog.length }} 次调用）</span>
+          <el-button size="small" link @click="toolCallsLog = []">清除</el-button>
+        </div>
+        <div class="tool-calls-list">
+          <div v-for="(tc, idx) in toolCallsLog" :key="idx" class="tool-call-item">
+            <div class="tool-call-name">
+              <el-tag size="small" type="warning">{{ tc.name }}</el-tag>
+              <span class="tool-call-step">第 {{ idx + 1 }} 步</span>
+            </div>
+            <div class="tool-call-args">
+              <span class="tool-call-label">参数：</span>
+              <code>{{ JSON.stringify(tc.args) }}</code>
+            </div>
+            <div class="tool-call-result">
+              <span class="tool-call-label">结果：</span>
+              <code>{{ JSON.stringify(tc.result, null, 2).substring(0, 200) }}{{ JSON.stringify(tc.result).length > 200 ? '...' : '' }}</code>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div v-if="availableTools.length > 0 && useToolMode" class="tools-info">
+        <div class="tools-info-header">可用工具</div>
+        <div v-for="tool in availableTools" :key="tool.name" class="tool-info-item">
+          <el-tag size="small" type="info">{{ tool.name }}</el-tag>
+          <span class="tool-info-desc">{{ tool.description }}</span>
+        </div>
       </div>
     </div>
 
@@ -850,6 +945,98 @@ onMounted(() => {
 
 .error-section {
   margin-bottom: 16px;
+}
+
+.tool-calls-section {
+  margin-top: 12px;
+  padding: 12px;
+  background: #fdf6ec;
+  border: 1px solid #faecd8;
+  border-radius: 8px;
+}
+
+.tool-calls-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-weight: 600;
+  font-size: 13px;
+  margin-bottom: 8px;
+  color: #e6a23c;
+}
+
+.tool-calls-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.tool-call-item {
+  padding: 8px;
+  background: #fff;
+  border-radius: 6px;
+  border: 1px solid #faecd8;
+}
+
+.tool-call-name {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+
+.tool-call-step {
+  font-size: 12px;
+  color: #909399;
+}
+
+.tool-call-args,
+.tool-call-result {
+  font-size: 12px;
+  margin-top: 4px;
+}
+
+.tool-call-label {
+  color: #909399;
+  font-weight: 600;
+}
+
+.tool-call-args code,
+.tool-call-result code {
+  font-family: Consolas, monospace;
+  font-size: 11px;
+  background: #f5f7fa;
+  padding: 2px 4px;
+  border-radius: 3px;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+.tools-info {
+  margin-top: 12px;
+  padding: 12px;
+  background: #f0f9eb;
+  border: 1px solid #e1f3d8;
+  border-radius: 8px;
+}
+
+.tools-info-header {
+  font-weight: 600;
+  font-size: 13px;
+  margin-bottom: 8px;
+  color: #67c23a;
+}
+
+.tool-info-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+
+.tool-info-desc {
+  font-size: 12px;
+  color: #606266;
 }
 
 .iterate-section {

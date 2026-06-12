@@ -104,3 +104,15 @@ export interface ChatMessage {
   role: "user" | "assistant";
   content: string;
 }
+
+export interface ToolCallLog {
+  name: string;
+  args: Record<string, any>;
+  result: any;
+}
+
+export interface ToolDefinition {
+  name: string;
+  description: string;
+  parameters: any;
+}

@@ -57,3 +57,11 @@
   - [实时预览沙箱](phase8-export-preview.md#3-实时预览沙箱)
   - [主题配置系统](phase8-export-preview.md#4-主题配置系统)
   - [四视图架构](phase8-export-preview.md#5-四视图架构)
+
+- 阶段9：Function Calling / Tool Use
+  - [什么是 Function Calling](phase9-function-calling.md#1-什么是-function-calling)
+  - [工作流程](phase9-function-calling.md#2-工作流程)
+  - [工具定义规范](phase9-function-calling.md#3-工具定义规范)
+  - [工具执行器设计](phase9-function-calling.md#4-工具执行器设计)
+  - [Ollama vs OpenAI 差异](phase9-function-calling.md#5-ollama-vs-openai-差异)
+  - [前端展示：工具调用链路](phase9-function-calling.md#6-前端展示工具调用链路)

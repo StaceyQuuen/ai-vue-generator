@@ -52,6 +52,27 @@ export async function fetchModels(config: ProviderConfig) {
   return response.json()
 }
 
+export async function generateWithTools(
+  prompt: string,
+  config?: ProviderConfig
+) {
+  const response = await fetch(
+    `${API_BASE}/generate-with-tools`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ prompt, ...getProviderBody(config) })
+    }
+  )
+
+  return response.json()
+}
+
+export async function fetchTools() {
+  const response = await fetch(`${API_BASE}/tools`)
+  return response.json()
+}
+
 export async function generatePage(
   prompt: string,
   config?: ProviderConfig
