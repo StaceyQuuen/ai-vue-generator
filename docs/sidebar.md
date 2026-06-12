@@ -50,3 +50,10 @@
   - [模板市场](phase7-schema-editor-template.md#3-模板市场)
   - [完整用户流程](phase7-schema-editor-template.md#4-完整用户流程)
   - [设计原则](phase7-schema-editor-template.md#5-设计原则)
+
+- 阶段8：真实项目导出 + 实时预览沙箱
+  - [ZIP 项目导出](phase8-export-preview.md#1-为什么需要-zip-项目导出)
+  - [完整项目脚手架](phase8-export-preview.md#2-完整项目脚手架)
+  - [实时预览沙箱](phase8-export-preview.md#3-实时预览沙箱)
+  - [主题配置系统](phase8-export-preview.md#4-主题配置系统)
+  - [四视图架构](phase8-export-preview.md#5-四视图架构)

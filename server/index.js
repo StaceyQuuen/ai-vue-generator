@@ -237,6 +237,16 @@ const projectSchema = {
 };
 
 function buildComponents(parsed) {
+  // 如果 AI 已经返回了 components 数组格式，直接使用
+  if (parsed.components && Array.isArray(parsed.components)) {
+    return {
+      pageName: parsed.pageName,
+      pageType: parsed.pageType || "list",
+      components: parsed.components
+    };
+  }
+
+  // 否则从扁平字段格式构建 components
   const components = [];
   const pageType = parsed.pageType || "list";
 

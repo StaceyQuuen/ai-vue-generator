@@ -6,6 +6,7 @@ import { generateMockData } from "./mock/generateMockData"
 import { promptTemplates } from "./config/promptTemplates"
 import { getHistory, addHistory, deleteHistory, clearHistory } from "./store/history"
 import { downloadFile } from "./utils/download"
+import { exportProjectZip, exportSinglePageZip } from "./utils/exportProject"
 import type { PageSchema, TableComponent, HistoryItem, ChatMessage, ProviderConfig, ModelOption, ProjectSchema } from "./types/schema"
 import SearchForm from "./renderer/SearchForm.vue"
 import DataTable from "./renderer/DataTable.vue"
@@ -14,6 +15,9 @@ import StatCards from "./renderer/StatCards.vue"
 import FormPage from "./renderer/FormPage.vue"
 import SchemaEditor from "./renderer/SchemaEditor.vue"
 import TemplateMarket from "./renderer/TemplateMarket.vue"
+import PreviewSandbox from "./renderer/PreviewSandbox.vue"
+import ThemeConfigPanel from "./renderer/ThemeConfig.vue"
+import type { ThemeConfig } from "./renderer/ThemeConfig.vue"
 import { ElMessage, ElMessageBox } from "element-plus"
 
 const prompt = ref("")
@@ -44,8 +48,16 @@ const projectResult = ref<ProjectSchema | null>(null)
 const projectLoading = ref(false)
 const projectPrompt = ref("")
 
-const activeView = ref<"preview" | "code" | "editor">("preview")
+const activeView = ref<"preview" | "code" | "editor" | "sandbox">("preview")
 const showTemplateMarket = ref(false)
+const showThemeConfig = ref(false)
+const themeConfig = ref<ThemeConfig>({
+  primaryColor: "#409eff",
+  borderRadius: 4,
+  fontSize: 14,
+  layoutBg: "#f5f7fa",
+  cardBg: "#ffffff"
+})
 
 const generatedCode = computed(() =>
   pageSchema.value
@@ -100,6 +112,16 @@ function handleDownloadCode() {
   const fileName = `${pageSchema.value.pageName}.vue`
   downloadFile(fileName, generatedCode.value)
   ElMessage.success("代码已下载")
+}
+
+async function handleExportZip() {
+  if (!pageSchema.value) return
+  try {
+    await exportSinglePageZip(pageSchema.value)
+    ElMessage.success("ZIP 项目已下载，npm install 后即可运行")
+  } catch (err: any) {
+    ElMessage.error("导出失败：" + err.message)
+  }
 }
 
 function handleCopyCode() {
@@ -248,16 +270,14 @@ async function handleGenerateProject() {
   }
 }
 
-function handleDownloadProject() {
+async function handleDownloadProject() {
   if (!projectResult.value) return
-
-  const files = generateProjectCode(projectResult.value)
-  const fileContent = Object.entries(files)
-    .map(([path, code]) => `${"=".repeat(60)}\n📁 ${path}\n${"=".repeat(60)}\n\n${code}`)
-    .join("\n\n")
-
-  downloadFile(`${projectResult.value.projectName}-project.txt`, fileContent)
-  ElMessage.success("项目代码已下载")
+  try {
+    await exportProjectZip(projectResult.value)
+    ElMessage.success("ZIP 项目已下载，npm install 后即可运行")
+  } catch (err: any) {
+    ElMessage.error("导出失败：" + err.message)
+  }
 }
 
 function handleSelectProjectPage(page: PageSchema) {
@@ -422,6 +442,12 @@ onMounted(() => {
               预览
             </el-button>
             <el-button
+              :type="activeView === 'sandbox' ? 'primary' : ''"
+              @click="activeView = 'sandbox'"
+            >
+              沙箱
+            </el-button>
+            <el-button
               :type="activeView === 'code' ? 'primary' : ''"
               @click="activeView = 'code'"
             >
@@ -434,6 +460,9 @@ onMounted(() => {
               编辑
             </el-button>
           </el-button-group>
+          <el-button size="small" @click="showThemeConfig = true">
+            🎨 主题
+          </el-button>
           <template v-if="activeView === 'code'">
             <el-button type="success" size="small" @click="handleCopyCode">
               📋 复制
@@ -442,6 +471,9 @@ onMounted(() => {
               ⬇️ 下载
             </el-button>
           </template>
+          <el-button type="primary" size="small" @click="handleExportZip">
+            📦 导出ZIP
+          </el-button>
         </div>
       </div>
 
@@ -473,6 +505,10 @@ onMounted(() => {
 
       <div v-else-if="activeView === 'code'" class="code-area">
         <pre>{{ generatedCode }}</pre>
+      </div>
+
+      <div v-else-if="activeView === 'sandbox'" class="sandbox-area">
+        <PreviewSandbox :schema="pageSchema" />
       </div>
 
       <div v-else class="editor-area">
@@ -640,6 +676,15 @@ onMounted(() => {
         @select="handleTemplateSelect"
       />
     </el-drawer>
+
+    <el-drawer
+      v-model="showThemeConfig"
+      title="🎨 主题配置"
+      direction="rtl"
+      size="360px"
+    >
+      <ThemeConfigPanel v-model="themeConfig" />
+    </el-drawer>
   </div>
 </template>
 
@@ -795,6 +840,12 @@ onMounted(() => {
   padding: 16px;
   background: #fff;
   border-radius: 4px;
+}
+
+.sandbox-area {
+  background: #fff;
+  border-radius: 4px;
+  overflow: hidden;
 }
 
 .error-section {
