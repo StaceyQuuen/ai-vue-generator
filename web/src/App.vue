@@ -12,12 +12,13 @@ import DataTable from "./renderer/DataTable.vue"
 import PagePagination from "./renderer/PagePagination.vue"
 import StatCards from "./renderer/StatCards.vue"
 import FormPage from "./renderer/FormPage.vue"
+import SchemaEditor from "./renderer/SchemaEditor.vue"
+import TemplateMarket from "./renderer/TemplateMarket.vue"
 import { ElMessage, ElMessageBox } from "element-plus"
 
 const prompt = ref("")
 const loading = ref(false)
 const pageSchema = ref<PageSchema | null>(null)
-const showCode = ref(false)
 const currentPage = ref(1)
 const errorMsg = ref("")
 const streamingContent = ref("")
@@ -42,6 +43,9 @@ const showProjectMode = ref(false)
 const projectResult = ref<ProjectSchema | null>(null)
 const projectLoading = ref(false)
 const projectPrompt = ref("")
+
+const activeView = ref<"preview" | "code" | "editor">("preview")
+const showTemplateMarket = ref(false)
 
 const generatedCode = computed(() =>
   pageSchema.value
@@ -262,6 +266,17 @@ function handleSelectProjectPage(page: PageSchema) {
   ElMessage.success(`已加载「${page.pageName}」`)
 }
 
+function handleSchemaUpdate(schema: PageSchema) {
+  pageSchema.value = schema
+}
+
+function handleTemplateSelect(schema: PageSchema) {
+  pageSchema.value = schema
+  chatMessages.value = []
+  activeView.value = "preview"
+  showTemplateMarket.value = false
+}
+
 onMounted(() => {
   handleLoadModels()
 })
@@ -286,6 +301,9 @@ onMounted(() => {
         @click="showProjectMode = true"
       >
         📁 项目级生成
+      </el-button>
+      <el-button @click="showTemplateMarket = true">
+        🏪 模板市场
       </el-button>
       <el-button @click="showModelConfig = true" style="margin-left: auto">
         ⚙️ 模型配置
@@ -398,19 +416,25 @@ onMounted(() => {
         <div class="result-actions">
           <el-button-group>
             <el-button
-              :type="!showCode ? 'primary' : ''"
-              @click="showCode = false"
+              :type="activeView === 'preview' ? 'primary' : ''"
+              @click="activeView = 'preview'"
             >
               预览
             </el-button>
             <el-button
-              :type="showCode ? 'primary' : ''"
-              @click="showCode = true"
+              :type="activeView === 'code' ? 'primary' : ''"
+              @click="activeView = 'code'"
             >
               代码
             </el-button>
+            <el-button
+              :type="activeView === 'editor' ? 'primary' : ''"
+              @click="activeView = 'editor'"
+            >
+              编辑
+            </el-button>
           </el-button-group>
-          <template v-if="showCode">
+          <template v-if="activeView === 'code'">
             <el-button type="success" size="small" @click="handleCopyCode">
               📋 复制
             </el-button>
@@ -421,7 +445,7 @@ onMounted(() => {
         </div>
       </div>
 
-      <div v-if="!showCode" class="preview-area">
+      <div v-if="activeView === 'preview'" class="preview-area">
         <template v-for="(comp, index) in pageSchema.components" :key="index">
           <StatCards
             v-if="comp.type === 'statCards'"
@@ -447,8 +471,12 @@ onMounted(() => {
         </template>
       </div>
 
-      <div v-else class="code-area">
+      <div v-else-if="activeView === 'code'" class="code-area">
         <pre>{{ generatedCode }}</pre>
+      </div>
+
+      <div v-else class="editor-area">
+        <SchemaEditor :schema="pageSchema" @update:schema="handleSchemaUpdate" />
       </div>
 
       <div class="iterate-section">
@@ -600,6 +628,18 @@ onMounted(() => {
         />
       </div>
     </el-drawer>
+
+    <el-drawer
+      v-model="showTemplateMarket"
+      title="🏪 模板市场"
+      direction="rtl"
+      size="420px"
+    >
+      <TemplateMarket
+        :current-schema="pageSchema"
+        @select="handleTemplateSelect"
+      />
+    </el-drawer>
   </div>
 </template>
 
@@ -749,6 +789,12 @@ onMounted(() => {
   font-family: 'Consolas', monospace;
   font-size: 14px;
   line-height: 1.6;
+}
+
+.editor-area {
+  padding: 16px;
+  background: #fff;
+  border-radius: 4px;
 }
 
 .error-section {

@@ -43,3 +43,10 @@
   - [模型配置 UI](phase6-multi-model-project.md#3-模型配置-ui)
   - [项目级生成](phase6-multi-model-project.md#4-项目级生成)
   - [OpenAI 兼容 API](phase6-multi-model-project.md#6-openai-兼容-api-支持)
+
+- 阶段7：Schema 可视化编辑 + 模板市场
+  - [为什么需要可视化编辑](phase7-schema-editor-template.md#1-为什么需要-schema-可视化编辑)
+  - [Schema 可视化编辑器](phase7-schema-editor-template.md#2-schema-可视化编辑器)
+  - [模板市场](phase7-schema-editor-template.md#3-模板市场)
+  - [完整用户流程](phase7-schema-editor-template.md#4-完整用户流程)
+  - [设计原则](phase7-schema-editor-template.md#5-设计原则)

@@ -50,6 +50,7 @@
 | [阶段4](phase4-product-upgrade.md) | 产品化升级 | Prompt 模板、历史记录、代码下载、完整代码生成 |
 | [阶段5](phase5-iterate-multi-type.md) | 对话式迭代 + 多页面类型 | AI 迭代修改、多页面类型、格式转换、Mock 优化 |
 | [阶段6](phase6-multi-model-project.md) | 多模型适配 + 项目级生成 | 适配器模式、模型配置、项目代码生成、OpenAI 兼容 |
+| [阶段7](phase7-schema-editor-template.md) | Schema 可视化编辑 + 模板市场 | 双向 Schema 驱动、可视化编辑器、模板 CRUD、导入/导出 |
 
 ## 快速开始
 

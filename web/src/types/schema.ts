@@ -90,6 +90,16 @@ export interface ProjectSchema {
   pages: PageSchema[];
 }
 
+export interface SchemaTemplate {
+  id: string;
+  name: string;
+  icon: string;
+  category: string;
+  schema: PageSchema;
+  isBuiltin?: boolean;
+  createdAt: number;
+}
+
 export interface ChatMessage {
   role: "user" | "assistant";
   content: string;
