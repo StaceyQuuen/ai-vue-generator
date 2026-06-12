@@ -203,6 +203,187 @@ app.post("/generate", async (req, res) => {
   }
 });
 
+app.post("/generate/stream", async (req, res) => {
+  try {
+    const { prompt } = req.body;
+
+    res.setHeader("Content-Type", "text/event-stream");
+    res.setHeader("Cache-Control", "no-cache");
+    res.setHeader("Connection", "keep-alive");
+
+    const headers = {
+      "Content-Type": "application/json",
+      ...(API_KEY ? { Authorization: `Bearer ${API_KEY}` } : {})
+    };
+
+    const response = await fetch(
+      `${BASE_URL}/api/chat`,
+      {
+        method: "POST",
+        headers,
+        body: JSON.stringify({
+          model: MODEL,
+          format: structuredPageSchema,
+          stream: true,
+          messages: [
+            {
+              role: "system",
+              content: SYSTEM_PROMPT
+            },
+            {
+              role: "user",
+              content: prompt
+            }
+          ]
+        })
+      }
+    );
+
+    if (!response.ok) {
+      const text = await response.text();
+      res.write(`data: ${JSON.stringify({ error: `API returned ${response.status}`, detail: text })}\n\n`);
+      res.end();
+      return;
+    }
+
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let fullContent = "";
+    let buffer = "";
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      buffer += decoder.decode(value, { stream: true });
+
+      const lines = buffer.split("\n");
+      buffer = lines.pop() || "";
+
+      for (const line of lines) {
+        const trimmed = line.trim();
+        if (!trimmed) continue;
+
+        try {
+          const parsed = JSON.parse(trimmed);
+
+          if (parsed.done === true && !parsed.message?.content) continue;
+
+          const token = parsed.message?.content || "";
+
+          if (token) {
+            fullContent += token;
+            res.write(`data: ${JSON.stringify({ token, fullContent })}\n\n`);
+          }
+        } catch {}
+      }
+    }
+
+    if (buffer.trim()) {
+      try {
+        const parsed = JSON.parse(buffer.trim());
+        const token = parsed.message?.content || "";
+        if (token) {
+          fullContent += token;
+          res.write(`data: ${JSON.stringify({ token, fullContent })}\n\n`);
+        }
+      } catch {}
+    }
+
+    let result;
+    try {
+      const schemaParsed = StructuredPageZodSchema.parse(JSON.parse(fullContent));
+      const components = [
+        { type: "searchForm", fields: schemaParsed.searchForm.fields },
+        { type: "table", columns: schemaParsed.table.columns },
+        { type: "pagination", total: schemaParsed.pagination.total || 100 }
+      ];
+      result = { success: true, data: { pageName: schemaParsed.pageName, components } };
+    } catch {
+      result = { success: true, data: { raw: fullContent } };
+    }
+
+    res.write(`data: ${JSON.stringify({ done: true, result })}\n\n`);
+    res.end();
+  } catch (error) {
+    console.error("Stream API Error:", error);
+    res.write(`data: ${JSON.stringify({ error: error.message })}\n\n`);
+    res.end();
+  }
+});
+
+app.post("/analyze-fields", async (req, res) => {
+  try {
+    const { columns } = req.body;
+
+    const headers = {
+      "Content-Type": "application/json",
+      ...(API_KEY ? { Authorization: `Bearer ${API_KEY}` } : {})
+    };
+
+    const fieldAnalysisSchema = {
+      type: "object",
+      properties: {
+        fields: {
+          type: "array",
+          items: {
+            type: "object",
+            properties: {
+              name: { type: "string", description: "字段名" },
+              type: { type: "string", enum: ["id", "name", "phone", "email", "money", "date", "status", "orderNo", "text"], description: "字段语义类型" }
+            },
+            required: ["name", "type"]
+          }
+        }
+      },
+      required: ["fields"]
+    };
+
+    const response = await fetch(
+      `${BASE_URL}/api/chat`,
+      {
+        method: "POST",
+        headers,
+        body: JSON.stringify({
+          model: MODEL,
+          format: fieldAnalysisSchema,
+          stream: false,
+          messages: [
+            {
+              role: "system",
+              content: "你是字段分析器。分析给定字段列表，返回每个字段的语义类型。"
+            },
+            {
+              role: "user",
+              content: JSON.stringify(columns)
+            }
+          ]
+        })
+      }
+    );
+
+    if (!response.ok) {
+      return res.status(500).json({
+        success: false,
+        error: `API returned ${response.status}`
+      });
+    }
+
+    const result = await response.json();
+    const content = result.message.content;
+
+    res.json({
+      success: true,
+      data: JSON.parse(content)
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
 app.listen(3001, () => {
   console.log("server running on port 3001");
 });

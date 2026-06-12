@@ -12,7 +12,6 @@
     "@element-plus/icons-vue": "^2.3.2",
     "@faker-js/faker": "^10.4.0",
     "element-plus": "^2.14.2",
-    "openai": "^6.42.0",
     "vue": "^3.5.34",
     "zod": "^4.4.3",
     "zod-to-json-schema": "^3.25.2"

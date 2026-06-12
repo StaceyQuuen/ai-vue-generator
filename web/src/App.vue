@@ -1,8 +1,9 @@
 <script setup lang="ts">
 import { ref, computed } from "vue"
-import { generatePage } from "./api"
+import { generatePageStream } from "./api"
 import { generateVueCode } from "./generator/generateVueCode"
-import type { PageSchema } from "./types/schema"
+import { generateMockData } from "./mock/generateMockData"
+import type { PageSchema, TableComponent } from "./types/schema"
 import SearchForm from "./renderer/SearchForm.vue"
 import DataTable from "./renderer/DataTable.vue"
 import PagePagination from "./renderer/PagePagination.vue"
@@ -14,13 +15,17 @@ const pageSchema = ref<PageSchema | null>(null)
 const showCode = ref(false)
 const currentPage = ref(1)
 const errorMsg = ref("")
-const debugInfo = ref("")
+const streamingContent = ref("")
 
 const generatedCode = computed(() =>
   pageSchema.value
     ? generateVueCode(pageSchema.value)
     : ""
 )
+
+function getTableMockData(comp: TableComponent): Record<string, any>[] {
+  return generateMockData(comp.columns, 10)
+}
 
 async function handleGenerate() {
   if (!prompt.value.trim()) {
@@ -31,31 +36,34 @@ async function handleGenerate() {
   loading.value = true
   pageSchema.value = null
   errorMsg.value = ""
-  debugInfo.value = "正在请求后端..."
+  streamingContent.value = ""
 
-  try {
-    const res = await generatePage(prompt.value)
-    debugInfo.value = `API响应: success=${res.success}, data=${JSON.stringify(res.data).substring(0, 200)}`
+  await generatePageStream(prompt.value, {
+    onToken(token, fullContent) {
+      streamingContent.value = fullContent
+    },
+    onDone(result) {
+      loading.value = false
+      streamingContent.value = ""
 
-    if (res.success && res.data?.pageName) {
-      pageSchema.value = res.data
-      ElMessage.success("页面生成成功！")
-    } else if (res.success && res.data?.raw) {
-      errorMsg.value = "AI 返回的数据格式不正确，无法解析为页面 Schema"
-      debugInfo.value += `\n原始内容: ${res.data.raw.substring(0, 200)}`
-      ElMessage.error(errorMsg.value)
-    } else {
-      errorMsg.value = res.error || "生成失败，请重试"
-      debugInfo.value += `\n错误: ${JSON.stringify(res)}`
-      ElMessage.error(errorMsg.value)
+      if (result.success && result.data?.pageName) {
+        pageSchema.value = result.data
+        ElMessage.success("页面生成成功！")
+      } else if (result.success && result.data?.raw) {
+        errorMsg.value = "AI 返回的数据格式不正确"
+        ElMessage.error(errorMsg.value)
+      } else {
+        errorMsg.value = result.error || "生成失败"
+        ElMessage.error(errorMsg.value)
+      }
+    },
+    onError(error) {
+      loading.value = false
+      streamingContent.value = ""
+      errorMsg.value = error
+      ElMessage.error(error)
     }
-  } catch (err: any) {
-    errorMsg.value = err.message || "网络错误，请检查后端服务是否启动"
-    debugInfo.value = `异常: ${err.message}`
-    ElMessage.error(errorMsg.value)
-  } finally {
-    loading.value = false
-  }
+  })
 }
 </script>
 
@@ -87,12 +95,12 @@ async function handleGenerate() {
       <el-alert :title="errorMsg" type="error" show-icon />
     </div>
 
-    <div v-if="debugInfo && !pageSchema" class="debug-section">
-      <el-alert type="info" :closable="false">
-        <template #title>
-          <pre style="margin:0; white-space: pre-wrap; font-size: 12px;">{{ debugInfo }}</pre>
-        </template>
-      </el-alert>
+    <div v-if="streamingContent" class="streaming-section">
+      <div class="streaming-header">
+        <span class="streaming-dot"></span>
+        AI 正在生成...
+      </div>
+      <pre class="streaming-content">{{ streamingContent }}</pre>
     </div>
 
     <div v-if="pageSchema" class="result-section">
@@ -123,7 +131,7 @@ async function handleGenerate() {
           <DataTable
             v-else-if="comp.type === 'table'"
             :columns="comp.columns"
-            :data="[]"
+            :data="getTableMockData(comp)"
           />
           <PagePagination
             v-else-if="comp.type === 'pagination'"
@@ -162,6 +170,50 @@ async function handleGenerate() {
 
 .input-section {
   margin-bottom: 32px;
+}
+
+.streaming-section {
+  margin-bottom: 24px;
+  border: 1px solid #e4e7ed;
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.streaming-header {
+  padding: 8px 16px;
+  background: #f0f9eb;
+  font-size: 13px;
+  color: #67c23a;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.streaming-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #67c23a;
+  animation: pulse 1.2s ease-in-out infinite;
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.3; }
+}
+
+.streaming-content {
+  padding: 16px;
+  margin: 0;
+  background: #1e1e1e;
+  color: #d4d4d4;
+  font-family: 'Consolas', monospace;
+  font-size: 13px;
+  line-height: 1.6;
+  max-height: 300px;
+  overflow-y: auto;
+  white-space: pre-wrap;
+  word-break: break-all;
 }
 
 .result-section {
@@ -203,10 +255,6 @@ async function handleGenerate() {
 }
 
 .error-section {
-  margin-bottom: 16px;
-}
-
-.debug-section {
   margin-bottom: 16px;
 }
 </style>
