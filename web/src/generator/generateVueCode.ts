@@ -9,10 +9,15 @@ export function generateVueCode(schema: PageSchema): string {
     switch (component.type) {
       case "statCards":
         template += generateStatCardsTemplate(component.cards)
+        // 生成统计卡片的响应式数据：statData 存储卡片数值（有配置值则使用，数字直接用，字符串加引号，否则随机生成 0~9999 整数）
+        // statTrend 存储趋势文本（如 "↑12%"），没有则默认空字符串
         scriptExtra += `
 const statData = reactive({
-${component.cards.map(c => `  ${c.prop}: ${c.prop === "totalUsers" ? "12846" : c.prop === "totalOrders" ? "8432" : c.prop === "totalRevenue" ? "128460" : c.prop === "monthlyGrowth" ? "12.5" : c.prop === "todayVisits" ? "2846" : c.prop === "activeUsers" ? "1024" : c.prop === "pendingOrders" ? "23" : Math.floor(Math.random() * 10000)}`).join(",\n")}
+${component.cards.map(c => `  ${c.prop}: ${c.value !== undefined ? (typeof c.value === 'number' ? c.value : `"${c.value}"`) : Math.floor(Math.random() * 10000)}`).join(",\n")}
 })
+const statTrend = {
+${component.cards.map(c => `  ${c.prop}: "${c.trend || ""}"`).join(",\n")}
+}
 `
         break
       case "searchForm":
@@ -149,7 +154,8 @@ function generateStatCardsTemplate(cards: StatCard[]): string {
       </div>
       <div>
         <div class="stat-card-title">${card.title}</div>
-        <div class="stat-card-value">{{ statData.${card.prop} }}</div>
+        <div class="stat-card-value">{{ typeof statData.${card.prop} === 'number' ? statData.${card.prop}.toLocaleString() : statData.${card.prop} }}${card.suffix ? `<span class="stat-card-suffix">${card.suffix}</span>` : ''}</div>
+        <div v-if="statTrend.${card.prop}" class="stat-card-trend" :class="statTrend.${card.prop}.startsWith('-') ? 'down' : 'up'">{{ statTrend.${card.prop} }}</div>
       </div>
     </div>`
   }).join("\n")

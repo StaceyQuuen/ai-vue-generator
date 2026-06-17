@@ -2,6 +2,7 @@ import express from "express";
 import cors from "cors";
 import dotenv from "dotenv";
 import { z } from "zod";
+import { ProxyAgent, setGlobalDispatcher } from "undici";
 
 import { fileURLToPath } from "url";
 import { dirname, join } from "path";
@@ -11,15 +12,20 @@ const __dirname = dirname(__filename);
 
 dotenv.config({ path: join(__dirname, ".env") });
 
+if (process.env.PROXY) {
+  setGlobalDispatcher(new ProxyAgent(process.env.PROXY));
+  console.log("Proxy configured:", process.env.PROXY);
+}
+
 const app = express();
 
 app.use(cors());
 app.use(express.json());
 
 const DEFAULT_API_KEY = process.env.API_KEY || "";
-const DEFAULT_BASE_URL = process.env.BASE_URL || "http://localhost:11434";
+const DEFAULT_BASE_URL = process.env.BASE_URL || "http://127.0.0.1:11434";
 const DEFAULT_MODEL = process.env.MODEL || "qwen2.5:7b";
-const DEFAULT_PROVIDER = process.env.PROVIDER || "ollama";
+const DEFAULT_PROVIDER = process.env.PROVIDER || "deepseek";
 
 const SYSTEM_PROMPT = `
 你是一个前端页面生成器。根据用户需求生成页面JSON。
@@ -236,13 +242,39 @@ const projectSchema = {
   required: ["projectName", "pages"]
 };
 
+const COMPONENT_TYPE_MAP = {
+  statistics: "statCards",
+  "statistics-cards": "statCards",
+  statcards: "statCards",
+  stats: "statCards",
+  filter: "searchForm",
+  "filter-form": "searchForm",
+  searchform: "searchForm",
+  "search-form": "searchForm",
+  "data-table": "table",
+  datatable: "table",
+  list: "table",
+  paging: "pagination",
+  "edit-form": "form",
+  editform: "form",
+};
+
+function normalizeComponentType(type) {
+  if (!type) return type;
+  const lower = type.toLowerCase().replace(/[_\s]/g, "");
+  return COMPONENT_TYPE_MAP[lower] || type;
+}
+
 function buildComponents(parsed) {
-  // 如果 AI 已经返回了 components 数组格式，直接使用
   if (parsed.components && Array.isArray(parsed.components)) {
+    const normalized = parsed.components.map(comp => ({
+      ...comp,
+      type: normalizeComponentType(comp.type)
+    }));
     return {
-      pageName: parsed.pageName,
+      pageName: parsed.pageName || parsed.title || "未命名页面",
       pageType: parsed.pageType || "list",
-      components: parsed.components
+      components: normalized
     };
   }
 
@@ -279,7 +311,7 @@ function getProviderConfig(reqBody) {
 }
 
 async function callAI({ provider, baseUrl, apiKey, model, messages, format, stream }) {
-  if (provider === "openai") {
+  if (provider === "deepseek") {
     const headers = {
       "Content-Type": "application/json",
       ...(apiKey ? { Authorization: `Bearer ${apiKey}` } : {})
@@ -293,6 +325,7 @@ async function callAI({ provider, baseUrl, apiKey, model, messages, format, stre
     };
 
     const url = `${baseUrl}/chat/completions`;
+    console.log("callAI deepseek URL:", url);
     return { url, headers, body, provider };
   }
 
@@ -313,18 +346,49 @@ async function callAI({ provider, baseUrl, apiKey, model, messages, format, stre
 }
 
 function parseAIResponse(parsed, provider) {
-  if (provider === "openai") {
+  if (provider === "deepseek") {
     return parsed.choices?.[0]?.delta?.content || parsed.choices?.[0]?.message?.content || "";
   }
   return parsed.message?.content || "";
 }
 
 function isDone(parsed, provider) {
-  if (provider === "openai") {
+  if (provider === "deepseek") {
     return parsed.choices?.[0]?.finish_reason === "stop";
   }
   return parsed.done === true;
 }
+
+function extractJSON(content) {
+  try {
+    return JSON.parse(content);
+  } catch {}
+  const codeBlockMatch = content.match(/```(?:json)?\s*\n?([\s\S]*?)\n?```/);
+  if (codeBlockMatch) {
+    try {
+      return JSON.parse(codeBlockMatch[1]);
+    } catch {}
+  }
+  const braceMatch = content.match(/\{[\s\S]*\}/);
+  if (braceMatch) {
+    try {
+      return JSON.parse(braceMatch[0]);
+    } catch {}
+  }
+  return null;
+}
+
+app.get("/config", (req, res) => {
+  res.json({
+    success: true,
+    config: {
+      provider: DEFAULT_PROVIDER,
+      baseUrl: DEFAULT_BASE_URL,
+      model: DEFAULT_MODEL,
+      hasApiKey: !!DEFAULT_API_KEY
+    }
+  });
+});
 
 app.get("/models", async (req, res) => {
   try {
@@ -353,14 +417,10 @@ app.get("/models", async (req, res) => {
 
       res.json({ success: true, models });
     } else {
-      res.json({
-        success: true,
-        models: [
-          { id: "gpt-4o-mini", name: "GPT-4o Mini" },
-          { id: "gpt-4o", name: "GPT-4o" },
-          { id: "gpt-3.5-turbo", name: "GPT-3.5 Turbo" }
-        ]
-      });
+      const models = [
+        { id: DEFAULT_MODEL, name: DEFAULT_MODEL }
+      ];
+      res.json({ success: true, models });
     }
   } catch {
     res.json({ success: true, models: [{ id: DEFAULT_MODEL, name: DEFAULT_MODEL }] });
@@ -394,16 +454,17 @@ app.post("/generate", async (req, res) => {
     const result = await response.json();
     const content = parseAIResponse(result, provider);
 
-    let parsed;
-    try {
-      parsed = StructuredPageZodSchema.parse(JSON.parse(content));
-    } catch (e) {
-      console.error("Zod parse error:", e.message);
-      parsed = { raw: content };
+    const extracted = extractJSON(content);
+    if (!extracted) {
+      return res.json({ success: true, data: { raw: content } });
     }
 
-    if (parsed.raw) {
-      return res.json({ success: true, data: parsed });
+    let parsed;
+    try {
+      parsed = StructuredPageZodSchema.parse(extracted);
+    } catch (e) {
+      console.error("Zod parse error:", e.message);
+      return res.json({ success: true, data: buildComponents(extracted) });
     }
 
     res.json({ success: true, data: buildComponents(parsed) });
@@ -452,7 +513,7 @@ app.post("/generate/stream", async (req, res) => {
 
       buffer += decoder.decode(value, { stream: true });
 
-      if (provider === "openai") {
+      if (provider === "deepseek") {
         const lines = buffer.split("\n");
         buffer = lines.pop() || "";
 
@@ -492,10 +553,15 @@ app.post("/generate/stream", async (req, res) => {
     }
 
     let result;
-    try {
-      const schemaParsed = StructuredPageZodSchema.parse(JSON.parse(fullContent));
-      result = { success: true, data: buildComponents(schemaParsed) };
-    } catch {
+    const extracted = extractJSON(fullContent);
+    if (extracted) {
+      try {
+        const schemaParsed = StructuredPageZodSchema.parse(extracted);
+        result = { success: true, data: buildComponents(schemaParsed) };
+      } catch {
+        result = { success: true, data: buildComponents(extracted) };
+      }
+    } else {
       result = { success: true, data: { raw: fullContent } };
     }
 
@@ -533,11 +599,16 @@ app.post("/iterate", async (req, res) => {
     const result = await response.json();
     const content = parseAIResponse(result, provider);
 
+    const extracted = extractJSON(content);
+    if (!extracted) {
+      return res.json({ success: true, data: { raw: content } });
+    }
+
     let parsed;
     try {
-      parsed = StructuredPageZodSchema.parse(JSON.parse(content));
+      parsed = StructuredPageZodSchema.parse(extracted);
     } catch (e) {
-      return res.json({ success: true, data: { raw: content } });
+      return res.json({ success: true, data: buildComponents(extracted) });
     }
 
     res.json({ success: true, data: buildComponents(parsed) });
@@ -585,7 +656,7 @@ app.post("/iterate/stream", async (req, res) => {
 
       buffer += decoder.decode(value, { stream: true });
 
-      if (provider === "openai") {
+      if (provider === "deepseek") {
         const lines = buffer.split("\n");
         buffer = lines.pop() || "";
         for (const line of lines) {
@@ -620,10 +691,15 @@ app.post("/iterate/stream", async (req, res) => {
     }
 
     let result;
-    try {
-      const schemaParsed = StructuredPageZodSchema.parse(JSON.parse(fullContent));
-      result = { success: true, data: buildComponents(schemaParsed) };
-    } catch {
+    const extracted = extractJSON(fullContent);
+    if (extracted) {
+      try {
+        const schemaParsed = StructuredPageZodSchema.parse(extracted);
+        result = { success: true, data: buildComponents(schemaParsed) };
+      } catch {
+        result = { success: true, data: buildComponents(extracted) };
+      }
+    } else {
       result = { success: true, data: { raw: fullContent } };
     }
 
@@ -660,10 +736,8 @@ app.post("/generate-project", async (req, res) => {
     const result = await response.json();
     const content = parseAIResponse(result, provider);
 
-    let parsed;
-    try {
-      parsed = JSON.parse(content);
-    } catch {
+    const parsed = extractJSON(content);
+    if (!parsed) {
       return res.json({ success: true, data: { raw: content } });
     }
 
@@ -677,7 +751,7 @@ app.post("/generate-project", async (req, res) => {
       });
       res.json({ success: true, data: { projectName: parsed.projectName, pages } });
     } else {
-      res.json({ success: true, data: { raw: content } });
+      res.json({ success: true, data: buildComponents(parsed) });
     }
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
@@ -1066,10 +1140,27 @@ const SYSTEM_PROMPT_TOOL = `
 
 工作流程：
 1. 分析用户需求，判断需要哪些业务数据
-2. 调用相应工具获取数据
+2. 在一次回复中并行调用所有需要的工具（不要逐个调用）
 3. 基于工具返回的真实数据生成页面Schema
 
-重要：你必须先调用工具获取数据，再生成最终结果。不要凭空编造数据。
+重要：你必须先调用工具获取数据，再生成最终结果。不要凭空编造数据。尽量在一次回复中调用所有需要的工具，避免逐个调用。
+
+返回格式要求：生成最终结果时，必须返回纯JSON对象（不要包含markdown代码块标记），包含以下字段：
+{
+  "pageName": "页面名称",
+  "pageType": "dashboard 或 list 或 form",
+  "components": [
+    { "type": "statCards", "cards": [{ "title": "标题", "prop": "属性名", "icon": "图标", "color": "颜色", "value": 数值, "trend": "趋势如+12.5%", "suffix": "单位如元、%" }] }, 
+    { "type": "searchForm", "fields": [{ "label": "标签", "prop": "属性名", "type": "input或select或date", "options": ["选项1"] }] },
+    { "type": "table", "columns": [{ "label": "标签", "prop": "属性名", "width": 120 }] },
+    { "type": "pagination", "total": 100 },
+    { "type": "form", "fields": [{ "label": "标签", "prop": "属性名", "type": "input或select或date或textarea或number", "options": ["选项1"], "required": true, "placeholder": "提示" }] }
+  ]
+}
+
+关键：statCards的每个card必须包含value和trend字段，值必须来自工具返回的真实数据，不要编造。例如工具返回{value:12846,trend:"+12.5%"}，则card中写"value":12846,"trend":"+12.5%"。
+
+注意：components中的type必须是以下之一：statCards、searchForm、table、pagination、form。不要使用其他类型名。
 `;
 
 app.post("/generate-with-tools", async (req, res) => {
@@ -1083,43 +1174,24 @@ app.post("/generate-with-tools", async (req, res) => {
       { role: "user", content: prompt }
     ];
 
-    const maxRounds = 5;
+    const maxRounds = 10;
 
     for (let round = 0; round < maxRounds; round++) {
-      let requestBody;
-      let requestHeaders;
-      let requestUrl;
-      let provider;
 
-      if (config.provider === "openai") {
-        requestUrl = `${config.baseUrl}/chat/completions`;
-        requestHeaders = {
-          "Content-Type": "application/json",
-          ...(config.apiKey ? { Authorization: `Bearer ${config.apiKey}` } : {})
-        };
-        requestBody = {
-          model: config.model,
-          messages,
-          tools: toolDefinitions,
-          tool_choice: round === 0 ? "auto" : "auto",
-          stream: false
-        };
-        provider = "openai";
-      } else {
-        requestUrl = `${config.baseUrl}/api/chat`;
-        requestHeaders = {
-          "Content-Type": "application/json",
-          ...(config.apiKey ? { Authorization: `Bearer ${config.apiKey}` } : {})
-        };
-        requestBody = {
-          model: config.model,
-          messages,
-          stream: false,
-          format: structuredPageSchema
-        };
-        provider = "ollama";
-      }
+      // ---- 构建请求 ----
+      const isDeepseek = config.provider === "deepseek";
+      const requestUrl = isDeepseek
+        ? `${config.baseUrl}/chat/completions`
+        : `${config.baseUrl}/api/chat`;
+      const requestHeaders = {
+        "Content-Type": "application/json",
+        ...(config.apiKey ? { Authorization: `Bearer ${config.apiKey}` } : {})
+      };
+      const requestBody = isDeepseek
+        ? { model: config.model, messages, tools: toolDefinitions, tool_choice: "auto", stream: false }
+        : { model: config.model, messages, stream: false, format: structuredPageSchema };
 
+      // ---- 调用 AI ----
       const response = await fetch(requestUrl, {
         method: "POST",
         headers: requestHeaders,
@@ -1137,16 +1209,22 @@ app.post("/generate-with-tools", async (req, res) => {
 
       const result = await response.json();
 
-      if (provider === "openai") {
-        const choice = result.choices?.[0];
-        const message = choice?.message;
-
+      // ---- DeepSeek：支持工具调用的多轮循环 ----
+      if (isDeepseek) {
+        const message = result.choices?.[0]?.message;
         if (!message) {
           return res.json({ success: false, error: "AI 未返回有效响应" });
         }
 
+        console.log(`Round ${round}: tool_calls=${!!message.tool_calls}, finish_reason=${result.choices?.[0]?.finish_reason}, content_length=${(message.content || "").length}`);
+        if (message.tool_calls) {
+          console.log(`  Tool calls: ${message.tool_calls.map(tc => tc.function.name).join(", ")}`);
+        }
+
+        // 将 AI 回复加入上下文（包含 tool_calls 或 content）
         messages.push(message);
 
+        // 如果 AI 请求调用工具，执行工具并继续下一轮
         if (message.tool_calls && message.tool_calls.length > 0) {
           for (const toolCall of message.tool_calls) {
             const toolName = toolCall.function.name;
@@ -1158,13 +1236,11 @@ app.post("/generate-with-tools", async (req, res) => {
             }
 
             const toolResult = executeToolCall(toolName, toolArgs);
+            console.log(toolResult, 'toolResult====》')
 
-            toolCallsLog.push({
-              name: toolName,
-              args: toolArgs,
-              result: toolResult
-            });
+            toolCallsLog.push({ name: toolName, args: toolArgs, result: toolResult });
 
+            // 将工具结果加入上下文，供下一轮 AI 参考
             messages.push({
               role: "tool",
               tool_call_id: toolCall.id,
@@ -1174,97 +1250,49 @@ app.post("/generate-with-tools", async (req, res) => {
           continue;
         }
 
-        const content = message.content || "";
-        let parsed;
-        try {
-          parsed = JSON.parse(content);
-        } catch {
-          return res.json({
-            success: true,
-            data: { raw: content },
-            toolCalls: toolCallsLog
-          });
-        }
-
-        if (parsed.pages && Array.isArray(parsed.pages)) {
-          const pages = parsed.pages.map(p => {
-            try {
-              return buildComponents(StructuredPageZodSchema.parse(p));
-            } catch {
-              return buildComponents(p);
-            }
-          });
-          return res.json({
-            success: true,
-            data: { projectName: parsed.projectName, pages },
-            toolCalls: toolCallsLog
-          });
-        }
-
-        try {
-          const validated = StructuredPageZodSchema.parse(parsed);
-          return res.json({
-            success: true,
-            data: buildComponents(validated),
-            toolCalls: toolCallsLog
-          });
-        } catch {
-          return res.json({
-            success: true,
-            data: buildComponents(parsed),
-            toolCalls: toolCallsLog
-          });
-        }
-      } else {
-        const content = parseAIResponse(result, provider);
-        let parsed;
-        try {
-          parsed = JSON.parse(content);
-        } catch {
-          return res.json({
-            success: true,
-            data: { raw: content },
-            toolCalls: toolCallsLog
-          });
-        }
-
-        if (parsed.pages && Array.isArray(parsed.pages)) {
-          const pages = parsed.pages.map(p => {
-            try {
-              return buildComponents(StructuredPageZodSchema.parse(p));
-            } catch {
-              return buildComponents(p);
-            }
-          });
-          return res.json({
-            success: true,
-            data: { projectName: parsed.projectName, pages },
-            toolCalls: toolCallsLog
-          });
-        }
-
-        try {
-          const validated = StructuredPageZodSchema.parse(parsed);
-          return res.json({
-            success: true,
-            data: buildComponents(validated),
-            toolCalls: toolCallsLog
-          });
-        } catch {
-          return res.json({
-            success: true,
-            data: buildComponents(parsed),
-            toolCalls: toolCallsLog
-          });
-        }
+        // AI 没有调用工具，说明已经生成最终答案
+        return res.json({
+          success: true,
+          data: buildPageResult(message.content || "", toolCallsLog),
+          toolCalls: toolCallsLog
+        });
       }
+
+      // ---- Ollama：不支持工具调用，直接解析结果 ----
+      const content = parseAIResponse(result, "ollama");
+      return res.json({
+        success: true,
+        data: buildPageResult(content, toolCallsLog),
+        toolCalls: toolCallsLog
+      });
     }
 
+    // 超过最大轮次仍未生成最终答案
     res.json({ success: false, error: "工具调用轮次超限", toolCalls: toolCallsLog });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
   }
 });
+
+/**
+ * 将 AI 返回的文本内容解析为页面数据
+ * 支持单页面和项目级（多页面）两种格式
+ */
+function buildPageResult(content, toolCallsLog) {
+  const parsed = extractJSON(content);
+  if (!parsed) {
+    return { raw: content };
+  }
+
+  // 项目级：包含多个页面
+  if (parsed.pages && Array.isArray(parsed.pages)) {
+    const pages = parsed.pages.map(p => buildComponents(p));
+    return { projectName: parsed.projectName, pages };
+  }
+
+  // 单页面
+  return buildComponents(parsed);
+}
 
 app.get("/tools", (req, res) => {
   res.json({

@@ -31,15 +31,11 @@ const colorMap: Record<string, string> = {
       <div class="stat-card-info">
         <div class="stat-card-title">{{ card.title }}</div>
         <div class="stat-card-value">
-          {{ card.prop === "totalUsers" ? "12,846" :
-             card.prop === "totalOrders" ? "8,432" :
-             card.prop === "totalRevenue" ? "¥128,460" :
-             card.prop === "totalProducts" ? "356" :
-             card.prop === "todayVisits" ? "2,846" :
-             card.prop === "activeUsers" ? "1,024" :
-             card.prop === "pendingOrders" ? "23" :
-             card.prop === "monthlyGrowth" ? "+12.5%" :
-             Math.floor(Math.random() * 10000).toLocaleString() }}
+          {{ card.value !== undefined ? (typeof card.value === 'number' ? card.value.toLocaleString() : card.value) : '—' }}
+          <span v-if="card.suffix" class="stat-card-suffix">{{ card.suffix }}</span>
+        </div>
+        <div v-if="card.trend" class="stat-card-trend" :class="card.trend.startsWith('-') ? 'down' : 'up'">
+          {{ card.trend }}
         </div>
       </div>
     </div>
@@ -95,5 +91,25 @@ const colorMap: Record<string, string> = {
   font-size: 22px;
   font-weight: 700;
   color: #303133;
+}
+
+.stat-card-suffix {
+  font-size: 14px;
+  font-weight: 400;
+  color: #909399;
+  margin-left: 2px;
+}
+
+.stat-card-trend {
+  font-size: 12px;
+  margin-top: 2px;
+}
+
+.stat-card-trend.up {
+  color: #67c23a;
+}
+
+.stat-card-trend.down {
+  color: #f56c6c;
 }
 </style>

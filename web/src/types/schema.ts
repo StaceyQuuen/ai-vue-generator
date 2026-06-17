@@ -31,6 +31,9 @@ export interface StatCard {
   prop: string;
   icon?: string;
   color?: string;
+  value?: number | string;
+  trend?: string;
+  suffix?: string;
 }
 
 export interface StatCardsComponent {
@@ -79,7 +82,7 @@ export interface ModelOption {
 }
 
 export interface ProviderConfig {
-  provider: "ollama" | "openai";
+  provider: "ollama" | "deepseek";
   baseUrl: string;
   apiKey: string;
   model: string;

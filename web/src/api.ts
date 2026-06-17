@@ -1,6 +1,11 @@
 import type { PageSchema, ProviderConfig } from "@/types/schema"
 
-const API_BASE = import.meta.env.VITE_API_BASE || "http://localhost:3001"
+const API_BASE = import.meta.env.VITE_API_BASE || "http://127.0.0.1:3001"
+
+export async function fetchConfig(): Promise<{ success: boolean; config: Partial<ProviderConfig> & { hasApiKey?: boolean } }> {
+  const response = await fetch(`${API_BASE}/config`)
+  return response.json()
+}
 
 function toBackendSchema(schema: PageSchema): any {
   const result: any = {

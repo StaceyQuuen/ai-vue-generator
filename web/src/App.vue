@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, watch } from "vue"
-import { generatePageStream, iteratePageStream, fetchModels, generateProject, generateWithTools, fetchTools } from "./api"
+import { generatePageStream, iteratePageStream, fetchModels, fetchConfig, generateProject, generateWithTools, fetchTools } from "./api"
 import { generateVueCode, generateProjectCode } from "./generator/generateVueCode"
 import { generateMockData } from "./mock/generateMockData"
 import { promptTemplates } from "./config/promptTemplates"
@@ -35,10 +35,10 @@ const chatMessages = ref<ChatMessage[]>([])
 
 const showModelConfig = ref(false)
 const providerConfig = ref<ProviderConfig>({
-  provider: "ollama",
-  baseUrl: "http://localhost:11434",
+  provider: "deepseek",
+  baseUrl: "https://api.deepseek.com",
   apiKey: "",
-  model: "qwen2.5:7b"
+  model: "deepseek-chat"
 })
 const modelList = ref<ModelOption[]>([])
 const loadingModels = ref(false)
@@ -202,8 +202,8 @@ async function handleLoadModels() {
 }
 
 function handleProviderChange() {
-  if (providerConfig.value.provider === "openai") {
-    providerConfig.value.baseUrl = "https://api.openai.com/v1"
+  if (providerConfig.value.provider === "deepseek") {
+    providerConfig.value.baseUrl = "https://api.deepseek.com"
   } else {
     providerConfig.value.baseUrl = "http://localhost:11434"
   }
@@ -352,7 +352,15 @@ function handleTemplateSelect(schema: PageSchema) {
   showTemplateMarket.value = false
 }
 
-onMounted(() => {
+onMounted(async () => {
+  try {
+    const res = await fetchConfig()
+    if (res.success && res.config) {
+      providerConfig.value.provider = res.config.provider || providerConfig.value.provider
+      providerConfig.value.baseUrl = res.config.baseUrl || providerConfig.value.baseUrl
+      providerConfig.value.model = res.config.model || providerConfig.value.model
+    }
+  } catch {}
   handleLoadModels()
   handleLoadTools()
 })
@@ -703,7 +711,7 @@ onMounted(() => {
             style="width: 100%"
           >
             <el-option label="Ollama (本地)" value="ollama" />
-            <el-option label="OpenAI (云端)" value="openai" />
+            <el-option label="DeepSeek (云端)" value="deepseek" />
           </el-select>
         </el-form-item>
 
@@ -711,7 +719,7 @@ onMounted(() => {
           <el-input v-model="providerConfig.baseUrl" placeholder="http://localhost:11434" />
         </el-form-item>
 
-        <el-form-item v-if="providerConfig.provider === 'openai'" label="API Key">
+        <el-form-item v-if="providerConfig.provider === 'deepseek'" label="API Key">
           <el-input
             v-model="providerConfig.apiKey"
             type="password"
@@ -752,10 +760,10 @@ onMounted(() => {
         />
         <el-alert
           v-else
-          title="OpenAI 模式"
+          title="DeepSeek 模式"
           type="warning"
           :closable="false"
-          description="使用 OpenAI 兼容 API，支持 OpenAI、DeepSeek、通义千问等。需配置正确的 API 地址和 Key。"
+          description="使用 DeepSeek API 或兼容 OpenAI 格式的 API（如 OneAPI 中转）。需配置正确的 API 地址和 Key。"
         />
       </div>
     </el-drawer>
